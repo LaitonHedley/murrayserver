@@ -21,6 +21,8 @@ import sys
 
 import logging
 
+print('Laiton Checking Changes Have Been Made')
+
 
 async def run_later(coro, delay):
     await sleep(delay)
@@ -300,11 +302,52 @@ class Game:
                                 self._state['players']['1']['hits'] += 1
                                 self._state['players']['1']['score'] += 1
                                 trajectory = 1
+           
+                            
                 else:
+                    
+                    # if ball['id'] < 9:
+                    #     if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
+                    #         if x + self._dim['ballR'] > self._state['players']['0']['pos'] and x < self._state['players']['0']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
+                    #             impact = (x + self._dim['ballR']/2) - (self._state['players']['0']['pos']+ (self._dim['pWidth']/2))
+                    #             offset = impact/(self._dim['pWidth']/2)/2
+                    #             if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                    #                 angle = -angle
+                    #             else:
+                    #                 angle = -angle + offset
+                    #             y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+                    #             self._state['players']['0']['hits'] += 1
+                    #             self._state['players']['0']['score'] += 2
+                    #             #trajectory = 1
+                    #         elif self._state['players']['0']['pos'] <= x <= self._state['players']['0']['pos'] + self._dim['pWidth']:
+                    #             # Player 0 hit ball from player 1, give 1 point
+                    #             self._state['players']['0']['hits'] += 1
+                    #             self._state['players']['0']['score'] += 1
+                    #             #trajectory = 1
+                    #     elif ball['id'] >= 9:
+                    #         if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
+                    #             if x + self._dim['ballR'] > self._state['players']['1']['pos'] and x < self._state['players']['1']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
+                    #                 impact = (x + self._dim['ballR']/2) - (self._state['players']['1']['pos']+ (self._dim['pWidth']/2))
+                    #                 offset = impact/(self._dim['pWidth']/2)/2
+                    #                 if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                    #                     angle = -angle
+                    #                 else:
+                    #                     angle = -angle + offset
+                    #                 y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+                    #                 self._state['players']['1']['hits'] += 1
+                    #                 self._state['players']['1']['score'] += 2
+                    #                # trajectory = 1
+                    #             elif self._state['players']['1']['pos'] <= x <= self._state['players']['1']['pos'] + self._dim['pWidth']:
+                    #                 # Player 1 hit ball from player 0, give 1 point
+                    #                 self._state['players']['1']['hits'] += 1
+                    #                 self._state['players']['1']['score'] += 1
+                    #                # trajectory = 1
 
+                
                     if ball['id'] < 9:
+
                         if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
-                            if x + self._dim['ballR'] > self._state['players']['0']['pos'] and x < self._state['players']['0']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
+                            if x + self._dim['ballR'] > self._state['players']['0']['pos'] and x < self._state['players']['0']['pos'] + self._dim['pWidth'] + self._dim['ballR']: ## approx paddle width - much to account for here.
                                 impact = (x + self._dim['ballR']/2) - (self._state['players']['0']['pos']+ (self._dim['pWidth']/2))
                                 offset = impact/(self._dim['pWidth']/2)/2
                                 if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
@@ -313,33 +356,39 @@ class Game:
                                     angle = -angle + offset
                                 y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
                                 self._state['players']['0']['hits'] += 1
-                                self._state['players']['0']['score'] += 2
-                                trajectory = 1
-                            elif self._state['players']['0']['pos'] <= x <= self._state['players']['0']['pos'] + self._dim['pWidth']:
-                                # Player 0 hit ball from player 1, give 1 point
-                                self._state['players']['0']['hits'] += 1
                                 self._state['players']['0']['score'] += 1
                                 trajectory = 1
-                        elif ball['id'] >= 9:
-                            if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
-                                if x + self._dim['ballR'] > self._state['players']['1']['pos'] and x < self._state['players']['1']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
-                                    impact = (x + self._dim['ballR']/2) - (self._state['players']['1']['pos']+ (self._dim['pWidth']/2))
-                                    offset = impact/(self._dim['pWidth']/2)/2
-                                    if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
-                                        angle = -angle
-                                    else:
-                                        angle = -angle + offset
-                                    y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
-                                    self._state['players']['1']['hits'] += 1
-                                    self._state['players']['1']['score'] += 2
-                                    trajectory = 1
-                                elif self._state['players']['1']['pos'] <= x <= self._state['players']['1']['pos'] + self._dim['pWidth']:
-                                    # Player 1 hit ball from player 0, give 1 point
-                                    self._state['players']['1']['hits'] += 1
-                                    self._state['players']['1']['score'] += 1
-                                    trajectory = 1
 
-                
+                    if ball['id'] >= 9:
+                        if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
+                            if x + self._dim['ballR'] > self._state['players']['1']['pos'] and x < self._state['players']['1']['pos'] + self._dim['pWidth'] + self._dim['ballR']: ## approx paddle width - much to account for here.
+                                impact = (x + self._dim['ballR']/2) - (self._state['players']['1']['pos']+ (self._dim['pWidth']/2))
+                                offset = impact/(self._dim['pWidth']/2)/2
+                                if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                                    angle = -angle
+                                else:
+                                    angle = -angle + offset
+                                y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+                                self._state['players']['1']['hits'] += 2
+                                self._state['players']['1']['score'] += 2
+                                trajectory = 1   
+                    
+                    # New addition
+                    if ball['id'] >= 9:
+                        if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
+                            if x + self._dim['ballR'] > self._state['players']['0']['pos'] and x < self._state['players']['0']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
+                                impact = (x + self._dim['ballR']/2) - (self._state['players']['0']['pos']+ (self._dim['pWidth']/2))
+                                offset = impact/(self._dim['pWidth']/2)/2
+                            if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                                angle = -angle
+                            else:
+                                angle = -angle + offset
+                            y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+                            self._state['players']['0']['hits'] += 1
+                            self._state['players']['0']['score'] += 1
+                            trajectory = 1 
+
+
                     # if ball['id'] < 9:
 
                     #     if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
@@ -477,6 +526,7 @@ class Game:
                             'dir': 1,
                             }
                     else:
+                        
                         balls[i] = {
                         'x': self._dim['ballX'][i%len(self._dim['ballX'])],
                         'y': self._dim['ballY'],
@@ -485,6 +535,8 @@ class Game:
                         'id': i,
                         'dir': 1,
                         }
+
+
                 self._state['balls'] = balls
 
                 ## DRT

@@ -231,8 +231,9 @@ let paddle2History = new PaddleHistory();
         var trialDuration       = 45  // 45 seconds
         var practiceTrialDuration = 25; // 25
         var dirInst             = 10;            //10 second intervals to display practice trial instructions
-        var blockBreakTime      = 20; // 20
-        var trialBreakTime      = 5; // 5
+        var blockBreakTime      = 0 // 20; // 20
+        var trialBreakTime      = 0; // 5
+        // var instructionsPause   = 5; // 5
         var instructionsPause   = 5; // 5
         var sharedColour        = "#963d97"; 
         var p1Colour            = "FireBrick";
@@ -929,7 +930,7 @@ let paddle2History = new PaddleHistory();
                         drtActive = false;
                     }
                     bInCombinedPractice = true;
-                    practiceTrialDuration = trialDuration;
+                    practiceTrialDuration = 2//trialDuration;
                     practiceTrial();
                 }
             }
@@ -946,7 +947,7 @@ let paddle2History = new PaddleHistory();
                     p2CumulativeScore = 0;
                 }
             }
-            if (bInTrial){
+            if (bInTrial){ 
                 if (bInPractice){
                     if (startCount == 0 && event.keyCode == 32){
                         event.preventDefault();
@@ -2207,6 +2208,7 @@ let paddle2History = new PaddleHistory();
             
             playerId = state.player_id;
             otherId = playerId === '0' ? '1' : '0';
+            
 // LH: Below appears to be the code for how balls are treated during the nonCol or Sep conditions.
             if  (state.block.block_type=="nonCol"){
                 for (let i = 0; i < state.block.n_balls; i++){
