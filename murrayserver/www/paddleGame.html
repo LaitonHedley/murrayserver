@@ -2219,21 +2219,33 @@ let paddle2History = new PaddleHistory();
 // LH: Below appears to be the code for how balls are treated during the nonCol or Sep conditions.
             if  (state.block.block_type=="nonCol"){
                 for (let i = 0; i < state.block.n_balls; i++){
-                    p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
-                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                    // p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                    // allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+
+                    p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
                 }
                 for (let i = state.block.n_balls; i < state.block.n_balls*2; i++){
-                    p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
-                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                    // p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                    // allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+
+                    p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
                 }
             } else {
                 for (let i = 0; i < state.block.n_balls; i++){
-                    p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
-                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                    // p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                    // allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+
+                    p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
                 }
                 for (let i = state.block.n_balls; i < state.block.n_balls*2; i++){
-                    p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
-                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                    // p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                    // allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+
+                    p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
                 }                
                 // for (let i = 0; i < state.block.n_balls*2; i++){
                     // allBalls.push(new Ball(state.balls[i].x, sharedColour, state.balls[i].id, state.balls[i].angle));
