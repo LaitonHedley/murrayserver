@@ -33,6 +33,7 @@ class Bot:
         self._player_id = None
         self.q_table = q_table
         self._bot_type = bot_type
+        self._score_multiplier = 5
 
     def start(self, game):
         self._game = game
