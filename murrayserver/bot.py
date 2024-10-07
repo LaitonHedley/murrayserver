@@ -312,68 +312,59 @@ class BotQ(Bot):
     
     def make_action(self, balls):
         obs = np.ones((1,2,self._state['block']['n_balls'] * 2)) * -999
+        other_obs = np.ones((1,2,self._state['block']['n_balls'] * 2)) * -999
         b_counter = -1
         for ball in balls:
             b_counter += 1
             if self._state['block']['block_type'] == 'nonCol':
-                if ball['id'] < 9 and self._player_id == '0':
-                    if ball['dir'] == 0:
-                        obs[0,:,b_counter] = self.getPos(ball)
-                elif ball['id'] >= 9 and self._player_id == '1':
-                    if ball['dir'] == 0:
-                        obs[0,:,b_counter] = self.getPos(ball)
+                if ball['dir'] == 0:
+                    if ball['id'] < 9 and self._player_id == '0':
+                            obs[0,:,b_counter] = self.getPos(ball)
+                        elif ball['id'] >= 9 and self._player_id == '1':
+                            obs[0,:,b_counter] = self.getPos(ball)
             else:
                 if ball['dir'] == 0:
-                    obs[0,:,b_counter] = self.getPos(ball)
+                    if self._player_id == '0':
+                        if ball['id'] < 9:
+                            obs[0,:,b_counter] = self.getPos(ball)
+                        else:
+                            other_obs[0,:,b_counter] = self.getPos(ball)
+                    else:
+                        if ball['id'] >= 9:        
+                            obs[0,:,b_counter] = self.getPos(ball)
+                        else:
+                            other_obs[0,:,b_counter] = self.getPos(ball)
 
-        if np.max(obs) == -999:
-            action = 1
+        if self._state['block']['block_type'] == 'nonCol':
+            if np.max(obs) == -999:
+                return self.move('stop')
         else:
-            all_x = obs[0,0,:]
-            all_x = all_x[all_x != -999]
-            all_x = [int(x) for x in all_x]
-            all_y = obs[0,1,:]
-            all_y = all_y[all_y != -999]
-            all_y = [int(y) for y in all_y]
-       
-            all_qs = self.get_qs(all_x, all_y)
-            all_best_actions = [-1]
-            all_best_qs = [-1]
-            all_mean_actions = np.zeros((1,3))
-            left = [0]
-            stop = [0]
-            right = [0]
-            for act in range(0,len(all_qs)):
-                best_action = np.argmax(all_qs[act])
-                best_action_q=np.amax(all_qs[act])
-                all_best_actions.append(best_action)
-                all_best_qs.append(best_action_q)
-                if best_action==0:
-                    left.append(best_action_q)
-                elif best_action==1:
-                    stop.append(best_action_q)
-                else:
-                    right.append(best_action_q)
-            all_mean_actions[0,0] = np.mean(left)
-            all_mean_actions[0,1] = np.mean(stop)
-            all_mean_actions[0,2] = np.mean(right)
-            ## take the most common suggested action - mode
-            # vals, counts = np.unique(all_best_actions[1:], return_counts=True)
-            # index = np.argmax(counts)
-            ## Move based on the most common score - tends to stick to the middle
-            # action = vals[index]
+            if np.max(obs) == -999 and np.max(other_obs) == -999:
+                return self.move('stop')
 
-            # Move based on the best average score - can get dragged to a side but makes some nice intuitive action when something is close (obvs being overweighted by the mean)
-            action = np.argmax(all_mean_actions)
+        all_x = self.obs_to_pos(obs[0,0,:])
+        all_y = self.obs_to_pos(obs[0,1,:])
+        all_qs = self.get_qs(all_x, all_y)
+        mean_qs = self.evaluate_qs(all_qs, multiplier = 1)
+
+        if self._state['block']['block_type'] == 'nonCol':
+            action = np.argmax(mean_qs)
+        else:
+            other_x = self.obs_to_pos(other_obs[0,0,:])
+            other_y = self.obs_to_pos(other_obs[0,1,:])
+            other_qs = self.get_qs(other_x, other_y)
+            other_mean_qs = self.evaluate_qs(other_qs, multiplier = self._score_multiplier)
+            action = np.argmax(means_qs + other_mean_qs)
+
+        match action:
+            case 0:
+                return self.move('left')
+            case 1:
+                return self.move('stop')
+            case 2:
+                return self.move('right')
 
 
-        if action == 0: # left
-            new_pos = self.move('left')
-        elif action == 1: # stop
-            new_pos = self.move('stop')
-        else: # right
-            new_pos = self.move('right')
-        return new_pos
 
     def move(self, direction):
         if direction == 'left':
@@ -388,11 +379,48 @@ class BotQ(Bot):
             new_pos = self._state['players'][self._player_id]['pos']
         return new_pos
 
+    
+    def obs_to_pos(self, obs):
+        pos = obs[obs != -999]
+        pos = [int(p) for p in pos]
+        return pos
+
+    
     def get_qs(self, xs, ys):
         all_qs = []
         for q in range(0,len(xs)):
             all_qs.append([self.q_table[(xs[q],ys[q])]])
         return all_qs
+        
+
+    def evaluate_qs(all_qs, multiplier = 1):
+        all_best_actions = [-1]
+        all_best_qs = [-1]
+        all_mean_actions = np.zeros((1,3))
+        left, stop, right = [0], [0], [0]
+        for _, q_value in enumerate(all_qs):
+            best_action = np.argmax(q_value)
+            best_action_q = np.amax(q_value)
+            all_best_actions.append(best_action)
+            all_best_qs.append(best_action_q)
+            if best_action == 0:
+                left.append(best_action_q)
+            elif best_action == 1:
+                stop.append(best_action_q)
+            else:
+                right.append(best_action_q)
+        all_mean_actions[0,0] = np.mean(left) * multiplier
+        all_mean_actions[0,1] = np.mean(stop) * multiplier
+        all_mean_actions[0,2] = np.mean(right) * multiplier
+        ## take the most common suggested action - mode
+        # vals, counts = np.unique(all_best_actions[1:], return_counts=True)
+        # index = np.argmax(counts)
+        ## Move based on the most common score - tends to stick to the middle
+        # action = vals[index]
+
+        # Move based on the best average score - can get dragged to a side but makes some nice intuitive action when something is close (obvs being overweighted by the mean)
+        # action = np.argmax(all_mean_actions)
+        return all_mean_actions
 
     async def _run(self):
         complete = create_task(self._game.join(self._player_id, self._stream))
