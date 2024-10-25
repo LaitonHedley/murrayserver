@@ -21,8 +21,8 @@ from os import path
 from time import time
 
 from .game import Game
-from .bot import Bot
-from .bot import Bot2
+# from .bot import Bot
+# from .bot import Bot2
 from .bot import BotQ
 
 total_games = 288
@@ -69,8 +69,10 @@ class Server:
 
         bot_type = None
         if against_bot:
-            bot_types = ['d','d','c','c','q','q']
-            pretend_to_be_humans = [False, True, False, True, False, True]
+            # bot_types = ['d','d','c','c','q','q']
+            # pretend_to_be_humans = [False, True, False, True, False, True]
+            bot_types = [ 'q','q']
+            pretend_to_be_humans = [False, True]
 
             bot_id = (game_id // len(bot_types)) % len(bot_types)
 
@@ -111,22 +113,51 @@ class Server:
         return HTTPFound(f'/teamspirit/{ game_id }/{ player_id }/paddleGame.html')
 
 
+    # async def _get_assets(self, request):
+    #     asset_path = request.match_info.get('path')
+    #     asset_path = path.join(path.dirname(__file__), 'www', asset_path)
+
+    #     try:
+    #         with open(asset_path) as file:
+    #             blob = file.read()
+
+    #         content_type = 'application/octet-stream'
+    #         mt = mimetypes.guess_type(asset_path)
+    #         if mt[0] is not None:
+    #             content_type = mt[0]
+
+    #         return Response(body=blob, content_type=content_type)
+    #     except:
+    #         return Response(status='404', text='404')
+
     async def _get_assets(self, request):
-        asset_path = request.match_info.get('path')
-        asset_path = path.join(path.dirname(__file__), 'www', asset_path)
+        asset_path = request.match_info.get('path')  # Get the requested file path
+        asset_path = path.join(path.dirname(__file__), 'www', asset_path)  # Form the full path
 
         try:
-            with open(asset_path) as file:
+            # Open the file in binary mode
+            with open(asset_path, 'rb') as file:
                 blob = file.read()
 
-            content_type = 'application/octet-stream'
+            # Guess the content type (MIME type) based on the file extension
+            content_type = 'application/octet-stream'  # Default content type
             mt = mimetypes.guess_type(asset_path)
             if mt[0] is not None:
                 content_type = mt[0]
 
+            # Return the file content with the correct content type
             return Response(body=blob, content_type=content_type)
-        except:
-            return Response(status='404', text='404')
+
+        except FileNotFoundError:
+            # Log the missing file for debugging purposes
+            print(f"File not found: {asset_path}")
+            return Response(status=404, text='404: Not Found')
+
+        except Exception as e:
+            # Log any other errors that might occur
+            print(f"Error while serving file {asset_path}: {e}")
+            return Response(status=500, text='500: Internal Server Error')
+
 
     def _start_game(self, game):
         game_task = create_task(game.run())

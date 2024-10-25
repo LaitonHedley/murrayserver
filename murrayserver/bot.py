@@ -33,7 +33,7 @@ class Bot:
         self._player_id = None
         self.q_table = q_table
         self._bot_type = bot_type
-        self._score_multiplier = 5
+        self._score_multiplier = 10
 
     def start(self, game):
         self._game = game
@@ -311,10 +311,11 @@ class BotQ(Bot):
         # return [bx-px, py-by]
         return [bx-px, env_size-by]
         
-    
+
     def make_action(self, balls):
         obs = np.ones((1,2,self._state['block']['n_balls'] * 2)) * -999
         other_obs = np.ones((1,2,self._state['block']['n_balls'] * 2)) * -999
+        balls_per_player_v2 = len(balls) / 2
         
         b_counter = -1
         for ball in balls:
@@ -333,8 +334,9 @@ class BotQ(Bot):
     
             # collaborative and competitive
             else:
+                print(f"balls_per_player: {balls_per_player_v2}")
                 if ball['dir'] == 0:
-                    if ball['id'] < 9:
+                    if ball['id'] < balls_per_player_v2: 
                         if self._player_id == '0':
                             obs[0,:, b_counter] = self.getPos(ball)
                         else:
@@ -353,7 +355,7 @@ class BotQ(Bot):
         all_x = self.process_obs(obs[0,0,:])
         all_y = self.process_obs(obs[0,1,:])
         all_qs = self.get_qs(all_x, all_y)
-        mean_qs = self.qs_to_action(all_qs, multiplier = 1)
+        mean_qs = self.qs_to_action(all_qs, multiplier = 1) 
 
         # repeat for the other ball locations
         if self._state['block']['block_type'] == 'nonCol':

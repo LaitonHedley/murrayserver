@@ -72,8 +72,8 @@ class Game:
             }
 
         block_orders = [
-            ["nonCol","col","com"], #123 A
-            ["nonCol","com","col"], #132 B
+            # ["nonCol","col","com"], #123 A
+            # ["nonCol","com","col"], #132 B
             ["col","nonCol","com"], #213 C
             ["col","com","nonCol"], #231 D
             ["com","nonCol","col"], #312 E
@@ -81,8 +81,9 @@ class Game:
            ]
 
         block_types = block_orders[self._game_no % len(block_orders)]
-        n_balls = [1, 1, 1, 3, 3, 3, 6, 6, 6, 9, 9, 9]  
-       # n_balls = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  
+        #n_balls = [1, 1, 1, 3, 3, 3, 6, 6, 6, 9, 9, 9]  
+        n_balls = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  
+        # n_balls = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]  
         balls_per_trial = {}
 
 
@@ -254,10 +255,14 @@ class Game:
         elapsed = now - last_time
 
         if self._state['status'] == 'playing' and self._last_status == 'playing':
+            num_balls = len(self._state['balls'])  # Calculate once at the start of the block
+            balls_per_player = num_balls / 2  # Updated here to reflect the current number of balls
+            # print(f"Number of balls: {num_balls}")
+
             for ball in self._state['balls']:
                 num_balls = len(self._state['balls'])
                 # print(f"Number of balls: {num_balls}")
-                balls_per_player = num_balls/2
+                # balls_per_player = num_balls/2
 
 
                 x = ball['x'] + ball['speed'] * math.cos(ball['angle']) * elapsed / 0.02
