@@ -72,8 +72,8 @@ class Game:
             }
 
         block_orders = [
-            # ["nonCol","col","com"], #123 A
-            # ["nonCol","com","col"], #132 B
+            ["nonCol","col","com"], #123 A
+            ["nonCol","com","col"], #132 B
             ["col","nonCol","com"], #213 C
             ["col","com","nonCol"], #231 D
             ["com","nonCol","col"], #312 E
@@ -81,8 +81,8 @@ class Game:
            ]
 
         block_types = block_orders[self._game_no % len(block_orders)]
-        #n_balls = [1, 1, 1, 3, 3, 3, 6, 6, 6, 9, 9, 9]  
-        n_balls = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  
+        n_balls = [1, 1, 1, 3, 3, 3, 6, 6, 6, 9, 9, 9]  
+        # n_balls = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  
         # n_balls = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]  
         balls_per_trial = {}
 
