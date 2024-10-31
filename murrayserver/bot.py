@@ -33,7 +33,7 @@ class Bot:
         self._player_id = None
         self.q_table = q_table
         self._bot_type = bot_type
-        self._score_multiplier = 10
+        self._score_multiplier = 5
 
     def start(self, game):
         self._game = game
@@ -316,7 +316,8 @@ class BotQ(Bot):
         obs = np.ones((1,2,self._state['block']['n_balls'] * 2)) * -999
         other_obs = np.ones((1,2,self._state['block']['n_balls'] * 2)) * -999
         balls_per_player_v2 = len(balls) / 2
-        
+        action = None
+
         b_counter = -1
         for ball in balls:
             b_counter += 1
@@ -327,54 +328,83 @@ class BotQ(Bot):
                         obs[0,:,b_counter] = self.getPos(ball)
                     elif ball['id'] >= 9 and self._player_id == '1':
                         obs[0,:,b_counter] = self.getPos(ball)
-                if np.max(obs) == -999:
-                    # action = 1
-                    new_pos = self.move('stop')
-                    return new_pos
-    
+                        
             # collaborative and competitive
             else:
                 print(f"balls_per_player: {balls_per_player_v2}")
                 if ball['dir'] == 0:
                     if ball['id'] < balls_per_player_v2: 
                         if self._player_id == '0':
-                            obs[0,:, b_counter] = self.getPos(ball)
+                            obs[0,:, b_counter] = self.getPos(ball) #my balls
                         else:
-                            other_obs[0, :, b_counter] = self.getPos(ball)
+                            other_obs[0, :, b_counter] = self.getPos(ball) #human balls...
                     else:
                         if self._player_id == '1':
                             obs[0,:, b_counter] = self.getPos(ball)
                         else:
                             other_obs[0, :, b_counter] = self.getPos(ball)
-                # stop if no balls moving down-screen
-                if np.max(obs) == -999 and np.max(other_obs) == -999:
-                    new_pos = self.move('stop')
-                    return new_pos
 
+
+        # if self._state['block']['block_type'] == 'nonCol':
+        #     if np.max(obs) == -999:
+        #         print(f"Obs: {obs}")
+        #         return self.move("stop")
+                
+        # else:
+        #     if np.max(obs) == -999 and np.max(other_obs) == -999:
+        #         print(f"Other Obs: {other_obs}")
+        #         return self.move("stop")
+
+        if self._state['block']['block_type'] == 'nonCol':
+            if np.max(obs) == -999:
+                print(f"Obs: {obs}")
+                return self.move("stop")
+
+        else:
+            # If both `obs` and `other_obs` are inactive, stop
+            if np.max(obs) == -999 and np.max(other_obs) == -999:
+                print(f"Other Obs: {other_obs}")
+                return self.move("stop")
+                
+            # If only `obs` is inactive or upward, fallback to `other_obs`
+            if np.max(obs) == -999:  # Define check_if_upwards function as needed
+                obs_to_use = other_obs
+            else:
+                obs_to_use = obs
+                
+    
         # convert ball x, y positions to q_table location, get q values, then determine best action from q values
-        all_x = self.process_obs(obs[0,0,:])
+        all_x = self.process_obs(obs[0,0,:]) 
         all_y = self.process_obs(obs[0,1,:])
         all_qs = self.get_qs(all_x, all_y)
-        mean_qs = self.qs_to_action(all_qs, multiplier = 1) 
+        mean_qs_weighted = self.qs_to_action(all_qs, multiplier = 1) #wieghting to the full strength of 5?
 
-        # repeat for the other ball locations
+        all_x_other = self.process_obs(other_obs[0,0,:]) 
+        all_y_other = self.process_obs(other_obs[0,1,:])
+        all_qs_other = self.get_qs(all_x_other, all_y_other)
+        mean_qs_other = self.qs_to_action(all_qs_other, multiplier = 0.2) #only wieghting these other obs as 1?
+
+        mean_qs = (mean_qs_weighted + mean_qs_other) / 2
+
+
+        print(f"Mean Q' others: {mean_qs_other}")
+        print(f"Mean Q' weighted: {mean_qs_weighted}")
+
+        # repeat for the other ball locations 
         if self._state['block']['block_type'] == 'nonCol':
             other_x = self.process_obs(other_obs[0, 0, :])
             other_y = self.process_obs(other_obs[0, 1, :])
             other_qs = self.get_qs(other_x, other_y)
             mean_qs = mean_qs + self.qs_to_action(other_qs, multiplier = self._score_multiplier)
-
-        action = np.argmax(mean_qs)
-        # best_action = np.argmax(all_mean_actions)
-        # return best_action
-        # action the paddle
+    
+        action = np.argmax(mean_qs)   
         if action == 0:
-            new_pos = self.move('left')
-        elif action == 1:
-            new_pos = self.move('stop')
+            return self.move('left')
+        elif action == 2:
+            return self.move('right')
         else:
-            new_pos = self.move('right')
-        return new_pos
+            return self.move('stop')
+
 
 
     def move(self, direction):
