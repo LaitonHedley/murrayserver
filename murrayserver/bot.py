@@ -377,25 +377,38 @@ class BotQ(Bot):
         all_x = self.process_obs(obs[0,0,:]) 
         all_y = self.process_obs(obs[0,1,:])
         all_qs = self.get_qs(all_x, all_y)
-        mean_qs_weighted = self.qs_to_action(all_qs, multiplier = 1) #wieghting to the full strength of 5?
+        mean_q_before_multi = self.qs_to_action(all_qs, multiplier = 1)  
+        mean_qs_weighted = self.qs_to_action(all_qs, multiplier = 2) 
 
         all_x_other = self.process_obs(other_obs[0,0,:]) 
         all_y_other = self.process_obs(other_obs[0,1,:])
         all_qs_other = self.get_qs(all_x_other, all_y_other)
-        mean_qs_other = self.qs_to_action(all_qs_other, multiplier = 0.2) #only wieghting these other obs as 1?
+        mean_q_other_before_multi = self.qs_to_action(all_qs_other, multiplier = 1) 
+        mean_qs_other = self.qs_to_action(all_qs_other, multiplier = 0.2) 
 
         mean_qs = (mean_qs_weighted + mean_qs_other) / 2
 
+        print(f"Q_Pref before multi: {mean_q_before_multi}")
+        print(f"Q_Pref after multi: {mean_qs_weighted}")
 
-        print(f"Mean Q' others: {mean_qs_other}")
-        print(f"Mean Q' weighted: {mean_qs_weighted}")
+        print(f"Q_Not_Pref before multi: {mean_q_other_before_multi}")
+        print(f"Q_Not_Pref after multi: {mean_qs_other}")
+
+        # print(f"Two Qs Average: {mean_qs}")
 
         # repeat for the other ball locations 
         if self._state['block']['block_type'] == 'nonCol':
-            other_x = self.process_obs(other_obs[0, 0, :])
-            other_y = self.process_obs(other_obs[0, 1, :])
-            other_qs = self.get_qs(other_x, other_y)
-            mean_qs = mean_qs + self.qs_to_action(other_qs, multiplier = self._score_multiplier)
+            # other_x = self.process_obs(other_obs[0, 0, :])
+            # other_y = self.process_obs(other_obs[0, 1, :])
+            # other_qs = self.get_qs(other_x, other_y)
+            # mean_qs = mean_qs + self.qs_to_action(other_qs, multiplier = self._score_multiplier) # change this to 1? 
+            all_x = self.process_obs(obs[0,0,:]) 
+            all_y = self.process_obs(obs[0,1,:])
+            all_qs = self.get_qs(all_x, all_y)  
+            mean_qs = self.qs_to_action(all_qs, multiplier = 1) 
+            print(f"Q_Vals: {mean_qs}")
+
+
     
         action = np.argmax(mean_qs)   
         if action == 0:

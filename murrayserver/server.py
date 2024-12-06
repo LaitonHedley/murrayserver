@@ -25,9 +25,9 @@ from .game import Game
 # from .bot import Bot2
 from .bot import BotQ
 
-total_games = 288
+total_games = 6
 to_be_completed_game_nos = [
-    58, 141, 196, 201, 210, 211, 236, 271, 274, 287
+    1, 2, 3, 4, 5, 6
 ]
 
 class Server:
