@@ -499,4 +499,4 @@ class BotQ(Bot):
                 balls = self._state['balls']
                 self._state['players'][self._player_id]['pos'] = self.make_action(balls)
 
-            await wait({ complete }, timeout=.05) 
+            await wait({ complete }, timeout=.05)
