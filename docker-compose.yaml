@@ -3,6 +3,6 @@ services:
   murrayserver:
     build: .
     platform: linux/amd64
-    image: scienceboy1996/laitonserver
+    image: scienceboy1996/laitonserver:single
     ports:
       - '8080:8080'

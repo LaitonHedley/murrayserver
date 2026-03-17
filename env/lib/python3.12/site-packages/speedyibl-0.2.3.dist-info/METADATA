@@ -1,0 +1,32 @@
+Metadata-Version: 2.1
+Name: speedyibl
+Version: 0.2.3
+Summary: Speedy implementation of IBL (Instance-based Learning)
+Home-page: UNKNOWN
+Author: Nhat Phan
+Author-email: <nhatsp@gmail.com
+License: Free for research purposes
+Keywords: Decision Making,Instance-based Learning,Cognitive Model
+Platform: UNKNOWN
+Classifier: Intended Audience :: Science/Research
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: MacOS :: MacOS X
+Classifier: Operating System :: Microsoft :: Windows
+Requires-Dist: setuptools (>=42)
+Requires-Dist: wheel
+Requires-Dist: numpy
+Requires-Dist: tabulate
+
+speedyibl: Python Implementation of Instance-Based Learning Theory
+
+
+Nguyen, T.N., Phan, D.N. & Gonzalez, C. SpeedyIBL: A comprehensive, precise, and fast implementation of instance-based learning theory. Behav Res (2022). <a href ="https://doi.org/10.3758/s13428-022-01848-x">https://doi.org/10.3758/s13428-022-01848-x<a>
+
+
+The detailed guideline on how to use it is available at <a href="https://github.com/DDM-Lab/SpeedyIBL">https://github.com/DDM-Lab/SpeedyIBL</a>
+
+
+
+ 
+
+

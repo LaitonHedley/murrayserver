@@ -24,6 +24,8 @@ from .game import Game
 from .bot import Bot
 from .bot import Bot2
 from .bot import BotQ
+# from .bot_ibl import BotIBL
+
 
 total_games = 288
 to_be_completed_game_nos = [

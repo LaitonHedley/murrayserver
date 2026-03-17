@@ -24,7 +24,6 @@ class WS(ProgressStream):
         pass
 
 class Bot:
-
     def __init__(self, pretend_to_be_human, bot_type):
         self._pretend_to_be_human = pretend_to_be_human
         self._state = None
