@@ -21,11 +21,7 @@ import random
 
 import logging
 
-<<<<<<< Updated upstream
-print('Laiton: Checking Changes Have Been Made PT3.3')
-=======
 print('Laiton: Checking Changes Have Been Made PT: 8.1')
->>>>>>> Stashed changes
 
 
 async def run_later(coro, delay):
@@ -85,14 +81,9 @@ class Game:
            ]
 
         block_types = block_orders[self._game_no % len(block_orders)]
-<<<<<<< Updated upstream
-        n_balls = [1, 1, 1, 3, 3, 3, 6, 6, 6, 9, 9, 9]  
-       # n_balls = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  
-=======
-        n_balls = [1, 6, 1, 6, 1, 6, 1, 6, 1, 6, 1, 6]  
+        n_balls = [3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 3, 6]  
         #n_balls = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  
         # n_balls = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]  
->>>>>>> Stashed changes
         balls_per_trial = {}
 
 

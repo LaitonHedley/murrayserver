@@ -71,13 +71,8 @@ class Server:
 
         bot_type = None
         if against_bot:
-            bot_types = ['d','d','c','c','q','q']
-            pretend_to_be_humans = [False, True, False, True, False, True]
-
-            bot_id = (game_id // len(bot_types)) % len(bot_types)
-
-            bot_type = bot_types[bot_id]
-            pretend_to_be_human = pretend_to_be_humans[bot_id]
+            bot_type = 'd'
+            pretend_to_be_human = False
 
             print(f'bot type is {bot_type} and human status is {pretend_to_be_human}')
 
