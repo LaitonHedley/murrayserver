@@ -1,18 +1,13 @@
 
-FROM ubuntu:22.04
+FROM python:3.12-slim
 
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    python3-minimal \
-    python3-distutils \
-    python3-aiohttp \
-    python3-numpy
+RUN pip install --no-cache-dir aiohttp numpy
 
 WORKDIR /tmp
 
 COPY murrayserver murrayserver
 COPY setup.py .
-RUN python3 setup.py install
+RUN pip install --no-cache-dir .
 
-EXPOSE 80
-ENTRYPOINT ["/usr/bin/bash", "-c"]
-CMD ["/usr/bin/python3 -u -m murrayserver"]
+EXPOSE 8080
+CMD ["python3", "-u", "-m", "murrayserver"]
