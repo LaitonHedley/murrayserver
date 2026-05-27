@@ -18,6 +18,7 @@ from functools import partial
 import mimetypes
 
 from os import path
+from os import getenv
 from time import time
 
 from .game import Game
@@ -152,6 +153,7 @@ class Server:
 
     async def start(self):
         await self._runner.setup()
-        site = TCPSite(self._runner, '0.0.0.0', 8080)
+        port = int(getenv('PORT', '80'))
+        site = TCPSite(self._runner, '0.0.0.0', port)
         await site.start()
-        print('Laiton: Check Runner is working')
+        print(f'Laiton: Check Runner is working on 0.0.0.0:{port}')

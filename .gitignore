@@ -1,9 +1,0 @@
-
-**/__pycache__/
-murrayserver/testing.py
-murrayserver/www/drtSave.html
-murrayserver/www/spriteSave.html
-murrayserver/open.py
-*.txt
-murrayserver/autoProgression.py
-**/.DS_Store
