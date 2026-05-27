@@ -1,0 +1,2611 @@
+<HTML>
+    <HEAD>
+    </HEAD>
+    <BODY style='color: #222222; background-color: ivory;'>
+
+    <SCRIPT>
+
+
+function ready(fn) {
+  if (document.readyState != 'loading'){
+    fn();
+  } else {
+    document.addEventListener('DOMContentLoaded', fn);
+  }
+}
+
+class ConnectionLost extends Error {}
+class UnableToConnect extends ConnectionLost {}
+
+class ProgressStream {
+
+    constructor(fun) {
+
+        this._progress = undefined;
+
+        this._results_prom = new Promise((resolve, reject) => {
+            this._resolve_result = resolve;
+            this._reject_result = reject;
+        });
+
+        this._progress_prom = new Promise((resolve, reject) => {
+            this._resolve_progress = resolve;
+            this._reject_progress = reject;
+        });
+
+        let self = this;
+        this.setProgress = function(progress) {
+            self._progress = progress;
+            self._resolve_progress();
+        };
+
+        let thing = fun(this.setProgress)
+            .then((result) => {
+                this._reject_progress();
+                this._resolve_result(result);
+            }, (error) => {
+                this._reject_progress(error);
+                this._reject_result(error);
+            });
+    }
+
+    then(onSuccess, onError) {
+        return this._results_prom.then(onSuccess, onError);
+    }
+
+    [Symbol.asyncIterator]() {
+        var self = this;
+        return {
+            async next() {
+                try {
+                    await self._progress_prom;
+                    self._progress_prom = new Promise((resolve, reject) => {
+                        self._resolve_progress = resolve;
+                        self._reject_progress = reject;
+                    });
+                    return { done: false, value: self._progress };
+                } catch (e) {
+                    if (e)
+                        throw e;
+                    else
+                        return { done: true };
+                }
+            }
+        };
+    }
+}
+
+
+let ws;
+let messages;
+let player;
+let serverTimeDelta;
+let pingSent = Date.now();
+let roundTripTime = 0;
+let messageDelay = 0;
+let state = { }
+let notifyStateReady;
+let stateReady = new Promise((resolve) => {
+    notifyStateReady = resolve;
+});
+
+function adjustedTime() {
+    return Date.now() + serverTimeDelta;
+}
+
+ready(async() => {
+
+       let protocol = (window.location.protocol === 'http:' ? 'ws:' : 'wss:')
+       let path = window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1);
+       let url = `${ protocol }//${ window.location.host }${ path }coms`;
+
+       ws = new WebSocket(url);
+
+       await new Promise(function(resolve, reject) {
+           ws.onopen = () => resolve();
+           ws.onerror = () => reject(new UnableToConnect());
+       });
+
+       messages = new ProgressStream((setProgress) => {
+           ws.onmessage = (message) => setProgress(message.data);
+           return new Promise((resolve, reject) => {
+               ws.onclose = () => reject(new ConnectionLost());
+           });
+       });
+
+       readMessages();
+       writeMessages();
+       await stateReady;
+
+       initialise();
+   });
+
+
+class PaddleHistory {
+    constructor() {
+        this.retain = 5000;
+        this.history = [ ]
+    }
+
+    add(time, pos) {
+        while (this.history.length > 1
+                && (time - this.history[this.history.length - 1].time) > this.retain) {
+            this.history.pop();
+        }
+        this.history.unshift({ time, pos });
+    }
+
+    get(time, currentPos) {
+
+        if (this.history.length === 0)
+            return currentPos;
+
+        if (time > this.history[0].time)
+            return this.history[0].pos;
+
+        // should use a binary search of course, but whatevs
+        for (let i = 1; i < this.history.length; i++) {
+            if (time > this.history[i].time) {
+                let intervalStart = this.history[i-1].time;
+                let intervalEnd = this.history[i].time;
+                let posStart = this.history[i-1].pos;
+                let posEnd = this.history[i].pos;
+                let weight = (time - intervalStart) / (intervalEnd - intervalStart);
+                let pos = (posEnd - posStart) * weight + posStart;
+
+                return pos;
+            }
+        }
+
+        return this.history[this.history.length-1].pos;
+    }
+}
+
+let paddle1History = new PaddleHistory();
+let paddle2History = new PaddleHistory();
+
+
+  </SCRIPT>
+    <!-- data check form -->
+    <div id="datacheck" style="margin:0 auto; background: ivory; display:none">
+        <h1 style="text-align:center; margin:0 auto;">Final Data Consent</h1>
+        <div id="username_msg" style="margin:0 auto; background: ivory;">
+            <p style="text-align:center; margin:0 auto; font-size:20;" >
+                Before commencing the final trial of the experiment, we wish to confirm your consent to use the data collected.<br>
+                Please check the relevant box below to confirm that you wish for your data to be used or discarded from future use.<br>
+                Upon completion of this final trial, you will still be reimbursed for your time regardless of your decision here. <br> <br>
+                Once you have made your selection, please press submit to continue
+            </p> 
+        </div>
+        <div id="p2_type" style="margin:0 auto; background: ivory; display:none">
+            <p style="text-align:center; margin:0 auto; font-size:20;">
+                Before commencing the final trial of the experiment, we wish to reveal the complete experimental design before confirming your consent to use the data collected.<br><br>
+                Our experiment aims to examine the behavioural and cognitive performance of individuals working with artificially intelligent machines. <br>
+                Player 2 in this experiment is a simple bot designed to maximise hits. <br>
+                
+                Some participants were made aware of this information at the start of the experiment and others were not. <br>
+                Part of our analysis will involve comparing performance of individuals when they were made explicitly aware of the bot or not. <br>
+                <br>
+                Having had this information revealed to you now, we are seeking your consent to include your data in this analysis.<br>
+                Please check the relevant box below to confirm that you wish for your data to be used or discarded from future use.<br>
+                Upon completion of this final trial, you will still be reimbursed for your time regardless of your decision here. <br> <br>
+                Once you have made your selection, please press submit to continue
+            </p>
+        </div>
+        <form id='data-retention' style="text-align:center; margin:0 auto;">
+            <p><label><input type='radio' id="removeData" name="rmData">I would like my data REMOVED from analysis</p></label>
+            <p><label><input type='radio' id="retainData" name="rmData">I would like my data INCLUDED in analysis</p></label>
+            <button type="button" id="submitData">submit</button>
+        </form>
+        <p id='empty_response_msg' style="text-align:center; margin:0 auto;font-size: 20;"></p>
+    </div> 
+  <!-- Exit form -->
+    <div id="exitForm" style="margin:0 auto;background: ivory; display:none">
+        <p style="text-align:center; margin:0 auto;">
+            <button type="button" id="exitButton"><h1>Return to Prolific</h1></button>
+        </p>
+    </div>
+
+    <canvas id="canvas" width="800" height="600" style="position:absolute; width: 100%; height:100%; z-index:1;"></canvas>
+    <canvas id="fireworks" width="800" height="600" style="position:absolute; width: 100%; height:100%; z-index:2;"></canvas>
+
+
+
+    <script>
+        let platform_source = new URLSearchParams(document.location.search.substring(1));
+        var sona_participants = platform_source.get('platform') === 'sona';
+        var show_drt = platform_source.get('d') == null; /*(d)isco or not - if we don't include it in params it should default to 'on'*/
+        var botratheon = platform_source.get('b') != null;        
+        var ambigubot = false;
+        
+        // var sona_participants = window.location.hostname === 'localhost';
+        username1 = platform_source.get('user_id');
+        var exp_completed = false;
+
+        drtChecks = [];
+    // Define variables
+        var nBlocks             = 3;
+        // Skip intro 
+        var skipIntro = true;
+
+        // workload
+        var workloadLevels      = [1,3,6,9];
+        var trialDuration       = 60  // 45 seconds
+        var practiceTrialDuration = 25; // 25
+        var dirInst             = 0;            //10 second intervals to display practice trial instructions
+        var blockBreakTime      = 0; // 20
+        var trialBreakTime      = 0; // 5
+        var instructionsPause   = 0; // 5
+        var sharedColour        = "#963d97"; 
+        var p1Colour            = "FireBrick";
+        var p2Colour            = "RoyalBlue";
+        var pColours            = [p1Colour, p2Colour];
+        var frameColour         = "ivory";
+        var fontColour          = "black"
+
+        // GameFrame
+        var drtWidth            = 800;
+        var frameWidth          = drtWidth*0.9;
+        var frameHeight         = 600;
+        var frameLeft;
+        var frameRight;
+        var frameTop;
+        var frameBottom;
+
+        // DRT
+
+        var drtLeft;
+        var drtRight;
+        var drtOn               = "#1bff00";
+        var drtOff              = "black";
+        var drtMin              = 3;
+        var drtMax              = 5;
+        var respWin             = 2.5;
+        var drtDur              = 1;
+        let drtResp1            = false;
+        let drtOnsets;
+        var onsets              = [];   // used to save the onset times for each trial
+        var drtScore            = 0;
+        var drtActive = false;
+        var drawnKeys = false;
+
+        var LHdrtRespKey        = "38"
+        var RHdrtRespKey        = "90"
+
+        var plyr1DRTrespKey;
+        var plyr2DRTrespKey;
+
+        var hand1;
+        var hand2;
+
+        // Timing
+        var startDate;
+		var startTime;
+		var currentTime;
+		var endDate;
+		var endTime;
+		var rt1 = [];
+        var rt2 = [];
+        var fa1 = [];
+        var fa2 = [];
+        var missCode = -1;
+        var waitingRoomStart;
+        var totalWait = 0.4 //60 * 10 // seconds * minutes %LH: change back to 20 WHEN DONE EDITING GAME
+        var timeWaited;
+        var drawWaitingRoomScientist;
+        
+        var startingTime;
+        var lastTime;
+        var elapsedSinceLastLoop;
+        var calc = pSpeed/1000;
+
+        // Experiment control
+        var nCurrentBlock;
+        var currentBlock;
+        var nCurrentTrial;
+        var bInTrial                = false;
+        var bInInstructions1        = false;
+        var bInInstructionsOnline   = false;
+		var bInInstructions2        = false;
+        var bInInstructions3        = false;
+        var bInInstructions4        = false;
+        var bInInstructionsEnd      = false;
+		var bInEndOfBlock           = false;
+		var bInBlockInstructions    = false;
+        var bInPractice             = false;
+        var proceed                 = false;
+        var bInTrialBreak           = false;
+        var justOncePlease          = true;
+        var dispCont                = true;
+        var dispFireworks           = false;
+        var bInPaddlePractice = false;
+        var bInDRTPractice = false;
+        var bInCombinedPractice = false;
+
+        var username1;
+        var data_consent_provided = false;
+        // Trial Start
+        let startCount          = 0;
+        let start;
+        var interval;
+        var timeout;
+
+        // Paddles
+        var paddle1;
+        var paddle2;
+        var nPaddles            = 2;
+        var pWidth              = frameWidth*0.1;
+        var pHeight             = pWidth*0.12;
+        var pSpeed              = Math.round(pHeight/2);
+        let p1Right             = false;
+        let p1Left              = false;
+        let p2Right             = false;
+        let p2Left              = false;
+        let p1Start;
+        let p2Start;
+        var py;
+        var LHleft              = "90"; //Z
+        var LHright             = "67"; //C
+        var RHleft              = "37"; //left arrow
+        var RHright             = "39"; // right arrow
+        var left;
+        var right;              
+
+        if (skipIntro){
+            left = RHleft; 
+            right = RHright; 
+            plyr1DRTrespKey = RHdrtRespKey;
+        }
+        
+        var p1Hand              = [];
+        var p1HandChosen        = false;
+        var p2HandChosen        = false;
+        var rtMin               = 0.1; // tenth of a second - used to clean RT times as they're made
+        var counter1 = true; // these are response counters so we don't have 100 RTs saved as hits for each DRT stimulus event.
+        var counter2 = true;
+        var onereminder = true;
+
+
+        // Balls
+        var bRad                = pHeight*0.9;
+        var bSpeed              = Math.ceil(pSpeed*0.8);
+        let moving              = false;
+        let lowLim              = 35;
+        let upperLim            = 155;
+        let p1Balls             =[];
+        let p2Balls             =[];
+        let allBalls            =[];
+        var bx;
+        var by;
+        var bAngles;
+
+        // Scoring
+        var hits1               = 0;
+        var miss1               = 0;
+        let score1              = 0;
+        var hits2               = 0;
+        var miss2               = 0;
+        let score2              = 0;
+        var teamScore           = 0;
+        var p1CumulativeScore   = 0;
+        var p2CumulativeScore   = 0;
+        var teamCumulativeScore = 0;
+        var p1teamScore         = 0;
+        var p2teamScore         = 0;
+        
+        // save Data
+        var paddleCoords        = [];
+        var ballCoords          = [];
+        var scoreData           = [];
+        var drtData             = [];
+
+        var outputSummary;
+    
+        // Sprite Classes
+        class Ball {
+            constructor(x, colour, ballId, angle) {
+                this.x      = x;
+                this.y      = by;
+                this.size   = bRad;
+                this.colour = colour;
+                this.speed  = bSpeed;
+                this.angle  = -deg2rad(angle);
+                this.identity = ballId;
+                this.xCoords = [];
+                this.yCoords = [];
+                this.hit = false;
+                this.miss = false;
+            }
+            move(paddlePos1,paddlePos2,elapsed){
+                
+                let identity = this.identity;
+                let ballId = this.identity;
+
+                if (state.block.block_type === "nonCol"){
+                    if (identity>=9){
+                        if (state.block.n_balls == 1){identity = identity - 8}
+                        else if (state.block.n_balls == 3){identity = identity - 6}
+                        else if (state.block.n_balls == 6){identity = identity - 3}
+                    }
+                }
+                if (state.balls) {
+                    let s = state.balls[identity];
+                    this.speed = s.speed;
+                    this.angle = s.angle;
+
+                    let bounds = {
+                        left: frameLeft + bRad,
+                        top: bRad,
+                        right: frameRight - bRad,
+                        bottom: frameHeight - bRad,
+                        paddle: py - bRad,
+                    };
+
+                    function move(x, y, speed, angle, elapsed) {
+                        let xe = x + speed * Math.cos(angle) * elapsed / 1000 / 0.02;
+                        let ye = y + speed * Math.sin(angle) * elapsed / 1000 / 0.02;
+                        return { x: xe, y: ye };
+                    }
+
+                    function determinePaddleLineCrossing(x, y, speed, angle, elapsed) {
+
+                        let end = move(x, y, speed, angle, elapsed);
+
+                        if (start.y > bounds.paddle || end.y < bounds.paddle)
+                            // did not pass through paddle line
+                            return;
+
+                        let prop = (bounds.paddle - y) / (end.y - y);
+                        let xAtCrossing = (end.x - x) * prop + x;
+                        elapsed = elapsed * prop;
+                        return { x: xAtCrossing, elapsed };
+                    }
+
+                    function determineResultantAngle(crossing, angle, paddleX) {
+                        if (paddleX === undefined)
+                            return;
+                        if (crossing.x < paddleX - bRad || crossing.x > paddleX + pWidth + bRad)
+                            return;
+
+                        let impact = (crossing.x + bRad / 2) - (paddleX + pWidth / 2)
+                        let offset = impact / (pWidth / 2) / 2
+                        let newAngle = -angle + offset;
+
+                        if (newAngle <= -deg2rad(155) || newAngle >= -deg2rad(35))
+                            return -angle;
+                        else
+                            return newAngle;
+                    }
+
+                    function determinePaddleCollision(x, y, speed, angle, elapsed, p1, p2) {
+
+                        let crossing = determinePaddleLineCrossing(x, y, speed, angle, elapsed);
+                        if ( ! crossing)
+                            return undefined;
+
+                        let remaining = elapsed - crossing.elapsed;
+                        let then = adjustedTime() - remaining;
+                        let paddle1x;
+                        let paddle2x;
+
+                        if (p1)
+                            paddle1x = paddle1History.get(then);
+                        if (p2)
+                            paddle2x = paddle2History.get(then);
+
+                        let angle1 = determineResultantAngle(crossing, angle, paddle1x);
+                        let angle2 = determineResultantAngle(crossing, angle, paddle2x);
+
+                        let rAngle;
+                        if (angle1 && angle2)
+                            rAngle = (angle1 + angle2) / 2;
+                        else if (angle1)
+                            rAngle = angle1;
+                        else if (angle2)
+                            rAngle = angle2;
+                        else
+                            return undefined;
+
+                        return { x: crossing.x, y: bounds.paddle, angle: rAngle, elapsed: crossing.elapsed };
+                    }
+
+                    function determineLeftCollision(x, y, speed, angle, elapsed) {
+                        let end = move(x, y, speed, angle, elapsed);
+                        if (end.x < bounds.left) {
+                            let prop = (x - bounds.left) / (x - end.x);
+                            x = bounds.left;
+                            y = (end.y - y) * prop + y;
+                            elapsed = elapsed * prop;
+                            angle = deg2rad(180) - angle;
+                            return { x, y, speed, angle, elapsed };
+                        }
+                    }
+
+                    function determineRightCollision(x, y, speed, angle, elapsed) {
+                        let end = move(x, y, speed, angle, elapsed);
+                        if (end.x > bounds.right) {
+                            let prop = (bounds.right - x) / (end.x - x);
+                            x = bounds.right;
+                            y = (end.y - y) * prop + y;
+                            elapsed = elapsed * prop;
+                            angle = deg2rad(180) - angle;
+                            return { x, y, speed, angle, elapsed };
+                        }
+                    }
+
+                    function determineTopCollision(x, y, speed, angle, elapsed) {
+                        let end = move(x, y, speed, angle, elapsed);
+                        if (end.y < bounds.top) {
+                            let prop = (y - bounds.top) / (y - end.y);
+                            y = bounds.top;
+                            x = (end.x - x) * prop + x;
+                            elapsed = elapsed * prop;
+                            angle = -angle;
+                            return { x, y, speed, angle, elapsed };
+                        }
+                    }
+
+                    function determineBottomCollision(x, y, speed, angle, elapsed) {
+                        let end = move(x, y, speed, angle, elapsed);
+                        if (end.y > bounds.bottom) {
+                            let prop = (bounds.bottom - y) / (end.y - y);
+                            x = (end.x - x) * prop + x;
+                            y = bounds.top;
+                            elapsed = elapsed * prop;
+                            return { x, y, speed, angle, elapsed };
+                        }
+                    }
+
+
+                    let playerId = state.player_id;
+
+                    let p1 = false
+                    let p2 = false;
+
+                    if (state.block.block_type == 'nonCol') {
+                        if ((ballId < 9 && playerId == 0) || (ballId >= 9 && playerId == 1))
+                            p1 = true;
+                        else
+                            p2 = true;
+                    }
+                    else {
+                        p1 = true;
+                        p2 = true;
+                    }
+
+                    let x = s.x;
+                    let y = s.y;
+                    let speed = s.speed;
+                    let angle = s.angle;
+
+                    while (true) {
+                        let collisions = [
+                            determineLeftCollision(x, y, speed, angle, elapsed),
+                            determineRightCollision(x, y, speed, angle, elapsed),
+                            determineTopCollision(x, y, speed, angle, elapsed),
+                            determineBottomCollision(x, y, speed, angle, elapsed),
+                            determinePaddleCollision(x, y, speed, angle, elapsed, p1, p2),
+                        ];
+
+                        let earliest = collisions.find((x, index, array) => {
+                            if (x === undefined)
+                                return false;
+                            for (let i = index + 1; i < array.length; i++) {
+                                if (array[i] && x.elapsed > array[i].elapsed)
+                                    return false;
+                            }
+                            return true;
+                        });
+
+                        if (earliest) {
+                            x = earliest.x;
+                            y = earliest.y;
+                            angle = earliest.angle;
+                            elapsed = elapsed - earliest.elapsed;
+                        }
+                        else {
+                            break;
+                        }
+                    }
+
+                    let pos = move(x, y, speed, angle, elapsed)
+                    this.x = pos.x;
+                    this.y = pos.y;
+                }
+            }
+
+            movePractice(paddlePos1){
+                let dx = this.x + this.speed*Math.cos(this.angle);
+                let dy = this.y + this.speed*Math.sin(this.angle);
+                let angle = this.angle;
+
+                if (dx >= frameRight - bRad){
+                    dx = frameRight - bRad - (frameRight - bRad - dx);
+                    angle = Math.PI - angle;
+                }
+                if (dx <= frameLeft + bRad) {
+                    dx = frameLeft + bRad + (frameLeft + bRad - dx)
+                    angle = Math.PI - angle;
+                }
+                if (dy < frameTop + bRad) {
+                    dy = frameTop + bRad + (frameTop + bRad - dy)
+                    angle = -angle;
+                }
+                if (dy > frameBottom) {
+                    dy -= frameBottom - frameTop - bRad;
+                    
+                    let oneTimeMiss1 = true;
+                    if (!this.miss && oneTimeMiss1){
+                        miss1++;
+                        this.miss=true;
+                    }
+                } 
+                    
+                if (dy > py-bRad && dy < py) {
+                    if (dx > paddlePos1 - bRad && dx < paddlePos1 + pWidth + bRad) {
+                        let impact  = (dx+bRad) - (paddlePos1+(0.5*pWidth));
+                        let offset  = impact/(pWidth*0.5)/2;
+                        if (-angle+offset <= -deg2rad(upperLim)){
+                            angle = -angle;
+                        } else if (-angle+offset>=-deg2rad(lowLim)){
+                            angle = -angle;
+                        } else {
+                            angle = -angle+offset
+                        }
+                        dy = py - (py-dy) - bRad
+                        let oneTimeHit1 = true;                        
+                        if (!this.hit && oneTimeHit1){
+                            hits1++;
+                            this.hit=true;
+                        }
+                    }
+                }
+
+                if (dy<frameBottom*0.33 && dy < frameBottom*0.67){
+                    this.hit = false;
+                    this.miss = false;
+                }
+
+                this.x = dx;
+                this.y = dy;
+                this.angle = angle;
+            }
+            draw(){
+                expContext.beginPath();
+                expContext.arc(this.x, this.y, this.size, 0, Math.PI*2);
+                expContext.fillStyle = this.colour;
+                expContext.fill();
+                expContext.stroke();
+            }
+        }
+        class Paddle {
+            constructor(x,colour){
+                this.x      = x;
+                this.colour = colour;
+                this.coords = [];
+                }
+            move(mvLeft = false, mvRight = false, speed) {
+                let playerId = state.player_id;
+                let otherId = playerId === '0' ? '1' : '0';
+                let theirPos = state.players[otherId].pos;
+
+                if (mvLeft){
+                    this.x -= speed;
+                    if (this.x <= frameLeft) {
+                        this.x = frameLeft;
+                    }
+                }
+                if (mvRight){
+                    this.x  += speed;
+                    if (this.x + pWidth >= frameRight){
+                        this.x = frameRight - pWidth;
+                    }
+                }
+            }
+
+            draw(){
+                expContext.beginPath();
+                expContext.rect(this.x,py,pWidth,pHeight);
+                expContext.fillStyle = this.colour;
+                expContext.fill();
+                expContext.stroke();
+            }
+        }
+        class DRT {
+            constructor(){
+            }
+            draw(drtColour){
+                expContext.beginPath();
+                expContext.rect(drtLeft,frameTop,drtWidth,frameHeight);
+                expContext.fillStyle = drtColour;
+                expContext.fill();
+                expContext.stroke();
+            }
+        }
+
+        function roundedRect(ctx,x,y,width,height,radius,fill,stroke){
+            ctx.strokeStyle = "black";
+            ctx.beginPath();
+            ctx.moveTo(x+radius,y);
+            ctx.arcTo(x+width,y,x+width,y+radius,radius);
+            ctx.arcTo(x+width,y+height,x+width-radius,y+height,radius);
+            ctx.arcTo(x,y+height,x,y+height-radius,radius);
+            ctx.arcTo(x,y,x+radius,y,radius);
+            if(fill){
+                ctx.fill();
+            }
+            if(stroke){
+                ctx.stroke();
+            }
+            ctx.strokeStyle = "black";
+        }
+        function drawKeyDepth(x, y) {
+            expContext.strokeStyle = "black";
+            expContext.beginPath();
+            expContext.moveTo(x - 10, y - 10);
+            expContext.lineTo(x + 30, y + 30);
+            expContext.moveTo(x + 29, y - 9);
+            expContext.lineTo(x - 10, y + 29);
+            expContext.stroke();
+            expContext.strokeStyle = fontColour;
+        }
+        function drawKey(ctx, faceVal, x, y, width, height, radius, fill, stroke, specialChar){
+            // Perimeter / Base
+            ctx.lineWidth = 4;
+            roundedRect(ctx,x-10,y-10,width, height, radius, false, stroke);
+            // Key top
+            expContext.lineWidth = 3;
+            drawKeyDepth(x,y);
+            expContext.fillStyle = fontColour;fontColour
+            roundedRect(ctx,x-5,y-6,width-10,height-10, radius-1, true, stroke);
+            // Key Content
+            expContext.fillStyle = frameColour;
+            if (specialChar){ // used for the directional arrows
+                var uni = '"\\u' + faceVal+'"';
+                var faceVal = eval(uni);
+            }
+            expContext.fillText(faceVal, x+10, y+10);
+            ctx.lineWidth = 1;
+            expContext.fillStyle=fontColour;
+        }
+        function keyInsts(p1, p2, drt1, drt2, x = expCanvas.height/2){
+            // Player Keys
+            if (p1){
+                expContext.fillStyle = p1Colour;
+                expContext.fillStyle = "black";
+                if (drt1 == LHdrtRespKey){
+                    if (show_drt){
+                        drawKey(expContext,"2191",expCanvas.width*0.67-15,x+50, 40, 40, 3,true,true,true);
+                        expContext.fillText("Light Response", expCanvas.width*0.67,x+100);
+                        expContext.fillText("Non-Dominant", expCanvas.width*0.67,x+25);
+                        drawKey(expContext,"Z",expCanvas.width/3-25,x+50, 40, 40, 3,true,true,false);
+                        drawKey(expContext,"C",expCanvas.width/3+25,x+50, 40, 40, 3,true,true,false);
+                        expContext.fillText("Left", expCanvas.width/3-30,x+100);
+                        expContext.fillText("Right", expCanvas.width/3+50,x+100);
+                        expContext.fillText("Dominant Hand", expCanvas.width/3,x+25);
+                    } else{
+                        drawKey(expContext,"Z",expCanvas.width/2-25,x+50, 40, 40, 3,true,true,false);
+                        drawKey(expContext,"C",expCanvas.width/2+25,x+50, 40, 40, 3,true,true,false);
+                        expContext.fillText("Left", expCanvas.width/2-30,x+100);
+                        expContext.fillText("Right", expCanvas.width/2+50,x+100);
+                        expContext.fillText("Dominant Hand", expCanvas.width/2,x+25);
+                    }
+                } else if (drt1 == RHdrtRespKey){
+                    if (show_drt){
+                        drawKey(expContext,"Z",expCanvas.width/3-15,x+50, 40, 40, 3,true,true,false);
+                        expContext.fillText("Light Response", expCanvas.width/3,x+100);
+                        expContext.fillText("Non-Dominant", expCanvas.width/3,x+25);
+                        drawKey(expContext,"2190",expCanvas.width*0.67-25,x+50, 40, 40, 3,true,true,true);
+                        drawKey(expContext,"2192",expCanvas.width*0.67+25,x+50, 40, 40, 3,true,true,true);
+                        expContext.fillText("Left", expCanvas.width*0.67-30,x+100);
+                        expContext.fillText("Right", expCanvas.width*0.67+50,x+100);
+                        expContext.fillText("Dominant Hand", expCanvas.width*0.67,x+25);
+                    } else {
+                        drawKey(expContext,"2190",expCanvas.width*0.5-25,x+50, 40, 40, 3,true,true,true);
+                        drawKey(expContext,"2192",expCanvas.width*0.5+25,x+50, 40, 40, 3,true,true,true);
+                        expContext.fillText("Left", expCanvas.width*0.5-30,x+100);
+                        expContext.fillText("Right", expCanvas.width*0.5+50,x+100);
+                        expContext.fillText("Dominant Hand", expCanvas.width*0.5+12.5,x+25);
+                    }
+                }
+            }
+        }
+
+        // Handling input
+        document.addEventListener("keydown",keyDownHandler, false);
+        document.addEventListener("keyup", keyUpHandler, false);
+        document.addEventListener("blur", lostFocus);
+        function keyDownHandler(e) {
+            if (e.keyCode == right) {
+                p1Right = true;
+            } else if (e.keyCode == left) {
+                p1Left = true;
+            }
+            // if (e.keyCode == plyr1DRTrespKey) {
+            //     drtResp1 = true;
+            // }
+
+            if (event.keyCode === 9){// Disable Tab key function
+                event.preventDefault();
+            }
+
+            if (bInInstructions1){
+				if (event.keyCode == 32 && proceed) {
+                    event.preventDefault();
+                    bInInstructions1 = false;
+                    clearTimeout(timeout)
+                    proceed = false;
+                    ws.send(JSON.stringify({"instructionProgress": 1}))
+                    instructionsOnline()                  
+                }
+            } else if (bInInstructionsOnline){
+                if (event.keyCode == 32 && proceed){
+                    event.preventDefault();
+                    bInInstructionsOnline = false;
+                    clearTimeout(timeout)
+                    proceed = false;
+                    ws.send(JSON.stringify({"instructionProgress": 2}))
+                    instructions2();
+                }
+
+            } else if (bInInstructions2){
+                if (p1Hand.length == 0 && !p1HandChosen){
+                    if (e.keyCode == LHdrtRespKey){
+                        hand1 = 'left';
+                        p1Hand.push(LHdrtRespKey);
+                        plyr1DRTrespKey = LHdrtRespKey;
+                        left    = LHleft;
+                        right   = LHright;
+                        p1HandChosen = true;
+                        ws.send(JSON.stringify({'hand':'Left'}));
+                    } else if (e.keyCode == RHdrtRespKey && !p1HandChosen){
+                        hand1 = 'right';
+                        p1Hand.push(RHdrtRespKey);
+                        plyr1DRTrespKey = RHdrtRespKey;
+                        left    = RHleft;
+                        right   = RHright;
+                        p1HandChosen = true;
+                        ws.send(JSON.stringify({'hand':'Right'}));
+                    }
+                    if (event.keyCode == 32){
+                        expContext.fillText("Before you can continue, please indicate if you are", expCanvas.width/2, expCanvas.height-120);
+                        expContext.fillText("RIGHT-handed by pressing 'Z' or",expCanvas.width/2,expCanvas.height-100);
+                        expContext.fillText("LEFT-handed by pressing 'UP' arrow.", expCanvas.width/2,expCanvas.height-80)
+                    }
+                }
+                if (p1Hand.length == 1 && p1HandChosen && !drawnKeys){
+                    keyInsts(true,true,plyr1DRTrespKey,plyr2DRTrespKey);
+                    p1HandChosen = true;
+                    drawnKeys = true;
+                }
+
+                if (p1Hand.length == 1){
+                    if (p2HandChosen){
+                        keyInsts(false,true,plyr1DRTrespKey,plyr2DRTrespKey);
+                        expContext.fillText("Press 'spacebar' to continue", expCanvas.width*.75,expCanvas.height-50);
+                        p2HandChosen = false;
+                    }
+                    if (event.keyCode == 32 && proceed) {
+                        event.preventDefault();
+                        clearTimeout(timeout)
+                        proceed = false;
+                        if (show_drt){
+                            ws.send(JSON.stringify({"instructionProgress": 3}))
+                        } else {
+                            ws.send(JSON.stringify({"instructionProgress": 4}))
+                        }
+                        bInPaddlePractice = true;                        
+                        bInInstructions2 = false;
+                        drtActive = false;
+                        practiceTrial();
+                    }
+                }
+
+            } else if (bInInstructions3){
+                if (event.keyCode == 32 && proceed) {
+                    event.preventDefault();
+                    clearTimeout(timeout)
+                    proceed = false;
+                    ws.send(JSON.stringify({"instructionProgress": 4}))
+                    bInInstructions3 = false;
+                    if(show_drt){
+                        drtActive = true;
+                        bInDRTPractice = true;
+                    } else {
+                        drtActive = false;
+                        bInDRTPractice = false;
+                    }
+                    practiceTrial();
+                }
+            }
+            else if (bInInstructions4){
+                if (event.keyCode == 32 && proceed) {
+                    event.preventDefault();
+                    clearTimeout(timeout)
+                    proceed = false;
+                    ws.send(JSON.stringify({"instructionProgress": 5}))
+                    bInInstructions4 = false;
+                    if(show_drt){
+                        drtActive = true;
+                    } else {
+                        drtActive = false;
+                    }
+                    bInCombinedPractice = true;
+                    practiceTrialDuration = trialDuration;
+                    practiceTrial();
+                }
+            }
+            else if (bInInstructionsEnd){
+                if (event.keyCode == 32 && proceed){
+                    event.preventDefault();
+                    clearTimeout(timeout)
+                    proceed = false;
+                    ws.send(JSON.stringify({"instructionProgress": 6}))
+                    bInInstructionsEnd = false;
+                    blockInst(state.block.block_type,state.blockNo);
+                    teamCumulativeScore = 0;
+                    p1CumulativeScore = 0;
+                    p2CumulativeScore = 0;
+                }
+            }
+            if (bInTrial){
+                if (bInPractice){
+                    if (startCount == 0 && event.keyCode == 32){
+                        event.preventDefault();
+                        moving = true;
+                        start = Date.now();
+                        startCount++
+                    }
+                }
+
+                if (event.keyCode == plyr1DRTrespKey){
+                    event.preventDefault();
+                    drtResp1 = true;
+                }
+            }
+            if (bInBlockInstructions){
+                if (event.keyCode == 32 && proceed){
+                    ws.send(JSON.stringify({"status":"ready"}))
+                    intertrialWaiting()
+                    proceed = false;
+                }
+            }
+            if (bInTrialBreak){
+                if (event.keyCode == 32 && proceed){
+                    scoreReset();
+                    if (state.trialNo == state.maxTrials-1 && state.blockNo == 2 && !data_consent_provided){ // prior to the commencement of the final trial
+                        dataCheck();
+                    } else if (nCurrentTrial<state.maxTrials){
+                        ws.send(JSON.stringify({"status":"ready"}))
+                        if (!show_drt){
+                            ws.send(JSON.stringify({'rt': -999}))
+                        }
+                        intertrialWaiting()
+                    } else {
+                        if (state.trialNo+1>=state.maxTrials){
+                            expEnd();
+                        } else {
+                            blockInst(state.block.block_type,state.blockNo);
+                        }
+                    }
+                    proceed = false;
+                    bInTrialBreak = false;
+                }
+            }
+        }
+        function keyUpHandler(e) {
+            if (e.keyCode == right) {
+                p1Right = false;
+            } else if (e.keyCode == left) {
+                p1Left  = false;
+            }
+            // DRT Response
+            if (e.keyCode == plyr1DRTrespKey) {
+                drtResp1 = false;
+            }
+        }
+
+        function lostFocus(){
+            p1Right = false;
+            p1Left  = false;
+            drtResp1 = false;
+        }
+
+        // Intro pages styling (highly important...)
+        function entryPageStyling(){
+            drawPanel(25,25,20,'#62bb47');
+            drawPanel(45,45,20,'#fcb827')
+            drawPanel(65,65,20,'#f6821f')
+            drawPanel(85,85,20,'#e03a3e')
+            drawPanel(105,105,20,'#963d97')
+            drawPanel(125,125,20,'#009ddc')
+
+        }
+        function drawPanel(xCross,yCross, width, fillColour){
+            // xCross is where on the top of the screen it crosses the screen, yCross is the same but for the left of screen
+            expContext.fillStyle = fillColour;
+            expContext.beginPath();
+            expContext.moveTo(xCross, frameTop);
+            expContext.lineTo(xCross+width, frameTop);
+            expContext.lineTo(0, yCross+width);
+            expContext.lineTo(0, yCross);
+            expContext.fill();
+        }
+
+        function drawInstControls(){
+            // CONTROLS
+            let x = expCanvas.width/2 - 110;
+            let y = 25;
+            let bitColours = ['#6500ab', '#f20794', '#d60003', '#f1983a', '#fcf351'];
+            let sz = 5;
+            let gridLength = 42;
+            let gridRows = 5;
+            let gridVals = {
+                        '1': [2,3,4,7,8,11,15,17,18,19,20,21,24,25,29,30,33,38,39,40],
+                        '2': [1,6,9,11,12,15,19,23,26,28,31,33,37],
+                        '3': [1,6,9,11,13,15,19,23,24,25,28,31,33,38,39],
+                        '4': [1,6,9,11,14,15,19,23,25,28,31,33,40],
+                        '5': [2,3,4,7,8,11,15,19,23,26,29,30,33,34,35,37,38,39],
+                    };
+            for (let r = 1; r <= gridRows; r++){
+                let colour = bitColours[r-1];
+                let gridCounter = 1;
+                for (let c = 1; c <= gridLength; c++) {
+                    if (gridVals[r].includes(gridCounter)){
+                        drawBit(x+(sz*gridCounter),y+(r*sz),sz,sz,colour);
+                    }
+                    gridCounter++;        
+                }
+            }
+        }
+
+        function drawGameTitle(){
+            // TEAM SPIRIT
+            let x = expCanvas.width/2 - 125;
+            let y = 50;
+            let bitColours = ['#6500ab', '#f20794', '#d60003', '#f1983a', '#fcf351'];
+            let sz = 5;
+            let gridLength = 50;
+            let gridRows = 10;
+            let gridVals = {
+                        '1': [1,2,3,4,5,28,29,30,31,48],
+                        '2': [3,27,32,48],
+                        '3': [3,27,48],
+                        '4': [3,7,8,9,13,14,16,18,20,22,27,34,36,39,41,43,46,48,49,50],
+                        '5': [3,6,10,12,15,16,18,19,21,23,28,29,30,31,34,35,37,41,42,44, 48],
+                        '6': [3,6,10,12,16,18,21,23,32,34,37,39,41,46,48],
+                        '7': [3,6,7,8,9,12,16,18,21,23,32,34,35,36,39,41,46,48],
+                        '8': [3,6,12,16,18,23,32,34,39,41,46,48],
+                        '9': [3,6,10,12,15,16,18,23,27,32,34,39,41,46,48,50],
+                        '10':[3,7,8,9,13,14,16,18,23,28,29,30,31,34,39,41,46,49],
+                    };
+            let colourCounter = 0;
+            for (let r = 1; r <= gridRows; r++){
+                let colour = bitColours[colourCounter];
+                let gridCounter = 1;
+                for (let c = 1; c <= gridLength; c++) {
+                    if (gridVals[r].includes(gridCounter)){
+                        drawBit(x+(sz*gridCounter),y+(r*sz),sz,sz,colour);
+                    }
+                    gridCounter++;
+                }
+                if (r%2==0){colourCounter++}
+            }
+        }
+        function drawTrialEnd(){
+            //TRIAL OVER
+            let x = expCanvas.width/2 - 110;
+            let y = 50;
+            let bitColours = ['#6500ab', '#f20794', '#d60003', '#f1983a', '#fcf351'];
+            let sz = 5;
+            let gridLength = 42;
+            let gridRows = 5;
+            let gridVals = {
+                        '1': [1,2,3,4,5,7,8,9,12,15,16,19,25,26,29,33,35,36,37,39,40,41],
+                        '2': [3,7,10,12,14,17,19,24,27,29,33,35,39,42],
+                        '3': [3,7,8,9,12,14,15,16,17,19,24,27,29,33,35,36,39,40,41],
+                        '4': [3,7,9,12,14,17,19,24,27,30,32,35,39,41],
+                        '5': [3,7,10,12,14,17,19,20,21,25,26,31,35,36,37,39,42],
+                    };
+            for (let r = 1; r <= gridRows; r++){
+                let colour = bitColours[r-1];
+                let gridCounter = 1;
+                for (let c = 1; c <= gridLength; c++) {
+                    if (gridVals[r].includes(gridCounter)){
+                        drawBit(x+(sz*gridCounter),y+(r*sz),sz,sz,colour);
+                    }
+                    gridCounter++;        
+                }
+            } 
+        }
+        function drawBit(x,y,width,height,colour){
+            expContext.fillStyle = fontColour;
+            expContext.fillRect(x,y,width,height);
+            expContext.fillStyle = colour;
+            expContext.fillRect(x-1,y-1,width-1,height-1)
+        }
+
+        // It is important to reward goal achievement
+        let fireworks = [];
+        let pxSize = 10;
+        class Spark {
+
+            constructor(x, y, angle, maxRadius){
+                this.x = x;
+                this.y = y;
+                this.angle = angle;
+                this.maxRadius = maxRadius;
+                this.radius = 0;
+                this.xOld = x;
+                this.yOld = y;
+                this.opacityModifier = 0.5 + Math.random() * 0.5;
+            }
+            update(){
+                const radiusIncrease = Math.sqrt(this.maxRadius) * Math.pow((this.maxRadius - this.radius),3) / Math.pow(this.maxRadius,3);
+                this.radius += radiusIncrease;
+                this.y += 0.5;
+            }
+            draw(ctx, colour, baseAlpha){
+                const dx = Math.cos(this.angle) * this.radius;
+                const dy = Math.sin(this.angle) * this.radius;
+                ctx.globalAlpha = baseAlpha * this.opacityModifier;
+                
+                ctx.fillStyle = colour;
+                ctx.fillRect(p(this.x + dx), p(this.y + dy), pxSize, pxSize);
+
+                this.xOld = p(this.x+dx-1);
+                this.yOld = p(this.y+dy-1);
+            }
+        }
+        class Firework {
+            constructor(x, y, altitude, colour, size) {
+                this.x = x;
+                this.y = y;
+                this.altitude = altitude;
+                this.sparks = [];
+                this.colour = colour;
+                this.size = size;
+                this.explodedAt = null;           
+                this.opacity = 1;
+            }
+            _createSparks () {
+                const numSparks = this.size / Math.pow(pxSize, 1/3);
+                for (let i = 0; i < numSparks; i++){
+                    const angle = Math.random() * 2 * Math.PI;
+                    const maxRadius = (1-Math.pow(Math.random(),2)) * this.size;
+                    this.sparks.push(new Spark(this.x, this.altitude, angle, maxRadius));
+                }
+                this.explodedAt = new Date();
+            }
+            update(){
+                if (this.y<=this.altitude) {
+                    if (this.explodedAt) {
+                        this.sparks.forEach((s)=>s.update());
+
+                        const timeSinceBoomBoom = new Date() - this.explodedAt;
+                        const expansionDuration = 2000;
+
+                        if (timeSinceBoomBoom >= expansionDuration){
+                            const timeSinceComplete = timeSinceBoomBoom-expansionDuration;
+                            const fade = 1000;
+                            if (timeSinceComplete <= fade){
+                                this.opacity = 1 - timeSinceComplete / fade;
+                            } else {
+                                this.opacity = 0;
+                            }
+                        }
+                    } else {
+                        this._createSparks();
+                    }
+                } else {
+                    this.y -= 5;
+                }
+                return this.opacity;
+            }
+
+            draw (ctx){
+                if (this.explodedAt){
+                    ctx.fillStyle = this.colour;
+                    this.sparks.forEach((s)=>s.draw(ctx, this.colour, this.opacity));
+                } else {
+                    // ctx.fillStyle = fontColour;
+                    // ctx.fillRect(p(this.x), p(this.y), pxSize, pxSize)
+                    ctx.beginPath();
+                    ctx.arc(p(this.x), p(this.y), bRad, 0, Math.PI*2);
+                    ctx.fillStyle = this.colour;
+                    ctx.fill();
+                    ctx.stroke();
+                }
+            }
+        }
+
+        function getColour() {
+                const fireworkColours = ["#1abc9c","#2ecc71","#3498db","#9b59b6","#f1c40f","#e67e22","#e74c3c","#ecf0f1"];
+                return fireworkColours[Math.floor(Math.random()*fireworkColours.length)];
+            }
+        function p(x){
+            return pxSize * Math.round(x / pxSize);
+        }
+        function drawFireWorks(){
+            if (dispFireworks){
+                fwCtx.clearRect(0,0,expCanvas.width, expCanvas.height)
+
+                if (Math.random() < 0.01){
+                    const x = frameWidth * 0.25 + Math.random() * frameWidth * 0.5;
+                    const y = frameBottom;
+                    const altitude = frameHeight * 0.25 + Math.random() * frameHeight * 0.5;
+                    const minDimension = Math.min(frameHeight,frameWidth);
+                    const size = Math.max(minDimension * 0.1, Math.random()*minDimension*0.5);
+
+                    fireworks.push(new Firework(x,y, altitude, getColour(), size));
+                }
+                fireworks = fireworks.filter((f)=> f.update());
+                fireworks.forEach((f)=> f.draw(fwCtx));
+                celebrAF = requestAnimationFrame(drawFireWorks);
+            }
+        }
+
+        // instructions bordering
+        function drawBorder(x,y,width,height, sz){
+            borderCols = ['#ab1a21','#ce175a','#e4840c','#ffe838'];
+            expContext.lineWidth = sz;
+            for (let i = 0; i<borderCols.length; i++){
+                expContext.strokeStyle = borderCols[i];
+                expContext.strokeRect(x+(sz*i),y+(sz*i),width-(sz*i*2),height-(sz*i*2));
+            }
+            for (let i = 0; i<borderCols.length; i++){
+                expContext.strokeStyle = borderCols[3-i];
+                expContext.strokeRect(x+(sz*i), y+(sz*i), (sz/2)+sz*(3-i), (sz/2)+sz*(3-i));
+                expContext.strokeRect(x+(sz*i), y+(height-6)-(sz*i)+(i*2), (sz/2)+sz*(3-i), (sz/2)+sz*(3-i));
+                expContext.strokeRect(x+(width-6)-(sz*i)+(i*2), y+(sz*i), (sz/2)+sz*(3-i), (sz/2)+sz*(3-i));
+                expContext.strokeRect(x+(width-6)-(sz*i)+(i*2), y+(height-6)-(sz*i)+(i*2), (sz/2)+sz*(3-i), (sz/2)+sz*(3-i));
+            }
+        }
+        function drawWaitingRoomTimer(){
+            // draws the timer and returns the time remaining
+            if (drawWaitingRoomScientist){
+                expTimeout = waitingRoomTimer(totalWait, waitingRoomStart)
+                waiter = requestAnimationFrame(drawWaitingRoomTimer);
+                // if (expTimeout <= 0){
+                //     expTimeout = 0;
+                //     cancelAnimationFrame(waiter);
+                //     return
+                // }
+                if (expTimeout%4 > 3){waitType='down';}else{waitType='up';}
+                drawWaiter(expCanvas.width/2-80,409,2,waitType);
+            } else{
+                cancelAnimationFrame(waiter);
+                fwCtx.clearRect(0,0, expCanvas.width, expCanvas.height);
+                return
+            }
+        }
+
+        function drawWaiterBG(x,y,pxSize){
+            waiterBackground = [18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 16, 18, 16, 18, 18, 18, 18, 18, 18, 18, 16, 16, 16, 18, 16, 18, 18, 18, 16, 16, 16, 16, 18, 18, 18, 18, 18, 18, 18,
+            18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 16, 18, 16, 18, 16, 18, 16, 16, 18, 18, 16, 16, 16, 18, 16, 18, 18, 16, 16, 18, 16, 18, 18, 16, 18, 16, 18, 18, 18, 18,
+            18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 16, 16, 16, 16, 16, 18, 16, 16, 16, 16, 16, 18, 18, 16, 16, 18, 16, 16, 16, 16, 16, 18, 18, 16, 18, 16, 16, 18, 18, 18, 18,
+            18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 16, 16, 16, 16, 16, 14, 16, 16, 16, 16, 14, 16, 18, 16, 16, 18, 16, 16, 16, 18, 18, 14, 16, 16, 16, 18, 16, 18, 18, 18, 16, 18,
+            18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 16, 18, 16, 18, 18, 18, 18, 14, 14, 18, 18, 18, 18, 18, 16, 16, 16, 16, 16, 16, 18, 16, 16, 18, 16, 16, 16, 16,
+            18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 16, 18, 16, 18, 18, 18, 14, 18, 18, 16, 16, 18, 14, 18, 16, 16, 16, 16, 16, 18, 16, 18, 16, 16, 18,
+            18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 18, 16, 16, 16, 18, 18, 16, 16, 18, 14, 16, 16, 16, 14, 16, 18, 18, 16, 16, 16, 16, 16, 18, 16, 16, 14, 18,
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 16, 16, 16, 5, 5, 16, 16, 16, 16, 5, 14, 5, 16, 16, 16, 16, 16, 16, 16, 5, 16, 4, 16, 16, 14, 16, 18,
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 16, 16, 16, 14, 16, 16, 5, 16, 5, 16, 16, 5, 16, 5, 5, 16, 5, 16, 16, 14, 16, 16, 16, 4, 18, 16, 16, 18,
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 16, 16, 14, 16, 5, 16, 16, 5, 5, 5, 16, 16, 5, 5, 5, 14, 16, 5, 16, 16, 4, 16, 18, 16, 18,
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 16, 16, 16, 5, 16, 14, 14, 14, 5, 5, 14, 14, 14, 5, 14, 14, 5, 16, 4, 4, 16, 18, 16, 18, 18,
+            5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 14, 14, 14, 14, 5, 5, 5, 14, 14, 5, 5, 5, 4, 4, 4, 18, 18, 18, 18,
+            4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 14, 14, 14, 4, 14, 14, 4, 4, 4, 4, 4, 4, 4, 18, 18, 18, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 13, 14, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 13, 14, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 7, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 8, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 13, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 8, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 8, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 8, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 8, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 14, 13, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 7, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 13, 13, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 1, 1, 1, 18, 18, 18, 18, 18, 15,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 3, 15, 1, 15, 18, 18, 18, 18, 15, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 3, 3, 3, 3, 3, 13, 13, 14, 14, 3, 3, 15, 1, 1, 15, 18, 18, 15, 15, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 14, 14, 15, 3, 3, 1, 15, 15, 18, 15, 18, 15, 18, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 14, 14, 14, 15, 15, 1, 1, 15, 15, 18, 15, 18, 15, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 17, 8, 8, 8, 8, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 15, 15, 15, 15, 18, 15, 15, 15, 18, 18,
+            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 8, 8, 17, 8, 8, 17, 3, 3, 3, 3, 3, 13, 14, 14, 15, 15, 15, 15, 13, 12, 11, 11, 15, 15, 15, 18,
+            3, 3, 10, 10, 10, 10, 10, 3, 3, 3, 3, 3, 3, 3, 8, 8, 8, 8, 8, 8, 3, 3, 3, 3, 17, 8, 8, 8, 17, 8, 17, 3, 3, 3, 3, 13, 14, 14, 14, 15, 3, 15, 13, 12, 11, 11, 15, 15, 18, 18,
+            3, 3, 10, 12, 12, 12, 10, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 7, 17, 3, 3, 17, 7, 17, 7, 17, 7, 7, 3, 3, 3, 3, 3, 13, 14, 14, 14, 3, 15, 15, 13, 12, 11, 11, 15, 18, 18, 15,
+            3, 3, 10, 12, 12, 12, 10, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 7, 17, 3, 3, 3, 3, 7, 17, 7, 17, 7, 17, 17, 3, 3, 3, 13, 14, 14, 14, 14, 15, 15, 15, 13, 12, 12, 12, 15, 18, 15, 18,
+            3, 3, 10, 12, 12, 12, 10, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 17, 7, 17, 3, 3, 3, 3, 7, 7, 17, 17, 7, 17, 3, 17, 3, 3, 13, 14, 14, 15, 14, 15, 3, 15, 13, 12, 11, 12, 15, 15, 15, 18,
+            3, 3, 10, 12, 12, 9, 10, 3, 3, 3, 3, 3, 3, 3, 7, 7, 17, 7, 17, 7, 3, 3, 3, 3, 7, 7, 17, 17, 17, 7, 3, 3, 3, 3, 13, 13, 14, 14, 15, 3, 15, 15, 13, 12, 11, 12, 15, 15, 16, 16,
+            3, 3, 10, 12, 12, 12, 10, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 17, 7, 17, 3, 3, 3, 7, 7, 7, 17, 17, 7, 3, 3, 3, 3, 13, 14, 14, 14, 14, 15, 3, 15, 13, 12, 11, 12, 15, 15, 15, 16,
+            3, 3, 10, 12, 12, 12, 10, 3, 3, 3, 3, 3, 3, 3, 7, 7, 7, 7, 17, 17, 3, 17, 3, 3, 7, 7, 7, 17, 7, 7, 3, 3, 3, 3, 13, 13, 14, 14, 14, 3, 15, 15, 13, 12, 11, 12, 15, 15, 16, 16,
+            9, 9, 9, 9, 9, 9, 9, 9, 9, 6, 6, 6, 6, 3, 7, 7, 7, 7, 17, 7, 3, 3, 3, 3, 7, 7, 7, 17, 7, 7, 3, 3, 3, 13, 13, 14, 14, 14, 14, 14, 3, 15, 13, 12, 12, 12, 15, 16, 16, 16,
+            9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 6, 6, 6, 6, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 14, 14, 14, 14, 14, 2, 2, 14, 14, 14, 2, 13, 12, 12, 12, 16, 16, 16, 16,
+            15, 15, 15, 15, 15, 15, 15, 15, 9, 9, 9, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 6, 2, 2, 2, 2, 13, 12, 12, 12, 2, 16, 16, 16,
+            15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 2, 2, 2, 1, 6, 6, 6, 6, 2, 2, 2, 2, 2, 2, 2, 2, 16, 16,
+            16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 2, 1, 6, 6, 6, 6, 1, 1, 2, 2, 2, 2, 2, 2,
+            15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 15, 15, 15, 15, 15, 15, 15, 2, 6, 6, 6, 6, 6, 1, 2, 2, 2, 2, 2,
+            16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 16, 15, 15, 15, 15, 15, 15, 2, 1, 6, 6, 6, 6, 1, 1, 2, 2, 2,
+            16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 16, 2, 1, 1, 6, 6, 6, 6, 1, 1, 2,
+            17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 17, 1, 1, 6, 6, 6, 6, 6, 6,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+            1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+            waiterBGColours = ["#7C4B38","#B5755B","#B3793F","#BAB733","#D0D058","#AEAAAA","#BFBFBF","#808080","#757171","#3A3838","#000000","#FFFFFF","#DDEBF7","#FCEEEF","#A9D08E","#81BA5A","#186a3b","#BDD7EE"];
+            let row = 0;
+            
+            for (let i = 0; i<waiterBackground.length; i++){
+                expContext.fillStyle = waiterBGColours[waiterBackground[i]-1];
+                if (i % 50 == 0){
+                    row++;
+                }
+                xPos = x + (i % 50)*pxSize;
+                yPos = y + (row*pxSize);
+                if (waiterBackground[i]==3){
+                    let grd = expContext.createLinearGradient(xPos,yPos,xPos+pxSize,yPos+pxSize);
+                    grd.addColorStop(0,"#7C4B38");
+                    grd.addColorStop(0.75, "#B3793F");
+                    expContext.fillStyle = grd;
+                }
+                if (waiterBackground[i]==5){
+                    let grd = expContext.createLinearGradient(xPos,yPos, xPos, yPos+pxSize);
+                    grd.addColorStop(0,"#BAB733");
+                    grd.addColorStop(0.1, "#D0D058");
+                    expContext.fillStyle = grd;
+                }
+                expContext.fillRect(xPos,yPos,pxSize,pxSize);
+            }
+        }
+        function drawWaiter(x,y,pxSize,waitType){
+            fwCtx.clearRect(0,0,expCanvas.width, expCanvas.height)
+            // 8 squares wide, 17 high
+            waiter = {'up':[0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 5, 5, 0, 0, 0,
+            0, 0, 5, 4, 4, 0, 0, 0,
+            0, 0, 5, 4, 4, 0, 0, 0,
+            0, 0, 0, 4, 4, 0, 0, 0,
+            0, 3, 3, 3, 3, 3, 3, 0,
+            3, 0, 3, 3, 3, 3, 0, 3,
+            4, 0, 3, 3, 3, 3, 0, 4,
+            4, 0, 3, 3, 3, 3, 0, 4,
+            0, 4, 3, 3, 3, 3, 4, 0,
+            0, 0, 2, 2, 2, 2, 0, 0,
+            0, 0, 2, 2, 2, 2, 0, 0,
+            0, 0, 0, 2, 0, 2, 0, 0,
+            0, 0, 0, 2, 0, 2, 0, 0,
+            0, 0, 0, 2, 0, 2, 0, 0,
+            0, 0, 0, 2, 0, 2, 0, 0,
+            0, 0, 0, 1, 0, 1, 0, 0],
+            'down': [0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 5, 5, 0, 0, 0,
+            0, 0, 5, 4, 4, 0, 0, 0,
+            0, 0, 5, 4, 4, 0, 0, 0,
+            0, 0, 0, 4, 4, 0, 0, 0,
+            0, 3, 3, 3, 3, 3, 3, 0,
+            3, 0, 3, 3, 3, 3, 0, 3,
+            4, 0, 3, 3, 3, 3, 0, 4,
+            4, 0, 3, 3, 3, 3, 0, 4,
+            0, 4, 3, 3, 3, 3, 4, 0,
+            0, 0, 2, 2, 2, 2, 0, 0,
+            0, 0, 2, 2, 2, 2, 0, 0,
+            0, 0, 0, 2, 0, 2, 0, 0,
+            0, 0, 2, 0, 0, 0, 2, 0,
+            0, 0, 0, 2, 0, 2, 0, 0,
+            0, 0, 0, 1, 0, 1, 0, 0]}
+            waiterColours = ["#000000","#801E56", "#002060", "#F8CBAD", "#58472E"];
+            let row = 0;
+            let currentWaiter = waiter[waitType];
+            for (let i = 0; i<waiter.up.length; i++){
+                fwCtx.fillStyle = waiterColours[currentWaiter[i]-1];
+                if (i % 8 == 0){
+                    row++;
+                }
+                xPos = x + (i % 8)*pxSize;
+                yPos = y + (row*pxSize);
+                if (currentWaiter[i]==0){
+                    continue
+                }
+                fwCtx.fillRect(xPos,yPos,pxSize,pxSize);
+            }
+        }
+
+        // Set Instructions
+        function waitingRoom(){
+            bInWaiting = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+            drawGameTitle();
+            drawWaiterBG(expCanvas.width/2 - 125, 250, 5);
+			expContext.fillStyle = fontColour;
+            expContext.font="30px Arial";
+			expContext.textAlign = "center";
+            expContext.fillText("Waiting room",expCanvas.width/2,expCanvas.height/4-10);
+            expContext.font="16px Arial";
+            expContext.fillText("During this experiment you will play an online multiplayer arcade-style game.",expCanvas.width/2,expCanvas.height/4+10);
+            expContext.fillText("We are currently waiting for player 2 to join.",expCanvas.width/2,expCanvas.height/4+30);
+            expContext.fillText("The experiment instructions will automatically begin once they connect.", expCanvas.width/2, expCanvas.height/4+60);
+            expContext.fillText("Please close the browser window if you do not wish to wait.",expCanvas.width/2,expCanvas.height/4+80);
+            
+            drawWaitingRoomTimer();
+            // border for the picture
+            drawBorder(expCanvas.width/2-132, 248, 263,263,2);
+        }
+
+        function waitingRoomTimer(totalWaitTime, start){
+            let timeRemaining;
+            let startTime = Date.now();
+            timeRemaining = (startTime-start)/1000;//+totalWaitTime;
+            let dispTime = timeRemaining.toFixed(0);
+
+            return timeRemaining;
+        }
+        function userEntry(){
+            ws.send(JSON.stringify({"platformID":username1}));
+            if (state.status === 'waiting'){
+                drawWaitingRoomScientist = true;
+                waitingRoom();
+            } else {
+                instructions1();
+                drawWaitingRoomScientist = false;
+            }
+        }
+
+        function instructions1(){
+            bInInstructions1 = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+            drawGameTitle()
+            fwCtx.clearRect(0,0,expCanvas.width, expCanvas.height);
+			expContext.fillStyle = fontColour;
+            expContext.font="16px Arial";
+			expContext.textAlign = "center";
+            expContext.fillText("Welcome to",expCanvas.width/2,expCanvas.height/4-100);
+            expContext.fillText("This experiment will examine your performance during a multiplayer arcade-style game.",expCanvas.width/2,expCanvas.height/4);
+            expContext.fillText("Please ensure that your browser window is maximised.",expCanvas.width/2,expCanvas.height/4+20);
+            if (show_drt){expContext.fillText("1/6", expCanvas.width*.75,25);}
+            else {expContext.fillText("1/5", expCanvas.width*.75,25);}
+            expContext.fillText("The game involves a set of balls flying around the screen and two paddles.",expCanvas.width/2,expCanvas.height/4+50);
+            expContext.fillText("Your task is to move your paddle to hit as many balls as you can within the time limit whilst",expCanvas.width/2,expCanvas.height/4+70);
+            expContext.fillText("collaborating, competing, or playing separately to the other player.", expCanvas.width/2,expCanvas.height/4+90);
+
+            expContext.fillText("The game runs over 3 blocks of 12 trials, where each trial lasts 45 seconds.", expCanvas.width/2,expCanvas.height/4+130);
+            expContext.fillText("There is a forced 20 second break between blocks.", expCanvas.width/2,expCanvas.height/4+150);
+            expContext.fillText("The experiment will take approximately 35-40 minutes.", expCanvas.width/2,expCanvas.height/4+170);
+            // expContext.fillText("You may exit the study at any time without penalty by closing your browser window.", expCanvas.width/2,expCanvas.height/4+190);
+
+            // expContext.fillText("Press 'spacebar' to continue", expCanvas.width*.75,expCanvas.height-50);
+            timeout = setTimeout(instructionsContinue,instructionsPause*1000);
+        }
+        // Perhaps include another page here that explains to them the nature of the multiplayer game. For example:
+        function instructionsOnline(){
+            bInInstructionsOnline = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+            drawGameTitle();
+			expContext.fillStyle = fontColour;
+            expContext.font="16px Arial";
+            expContext.textAlign = "center";
+            expContext.fillText("During this experiment you will be collaborating and competing with another player.",expCanvas.width/2,expCanvas.height/4);
+            
+            if (show_drt){expContext.fillText("2/6", expCanvas.width*.75,25);}
+            else {expContext.fillText("2/5", expCanvas.width*.75,25);}
+            
+            if (botratheon){
+                if (ambigubot){
+                    expContext.fillText("Please read through the instructions at your own pace but when the experiment",expCanvas.width/2,expCanvas.height/4+30); 
+                    expContext.fillText("begins you will be required to indicate that you are ready before the next trial begins.",expCanvas.width/2,expCanvas.height/4+50);
+                    expContext.fillText("We understand that these tasks can become tedious however, as a courtesy to",expCanvas.width/2,expCanvas.height/4+80);
+                    expContext.fillText("time constraints of your fellow player, it is important that", expCanvas.width/2,expCanvas.height/4+100);
+                    expContext.fillText("you remain engaged with and progress through the inter-trial and inter-block breaks.",expCanvas.width/2,expCanvas.height/4+120);
+                } else {
+                    expContext.fillText("The other player is a bot designed to maximise the total number of hits.",expCanvas.width/2,expCanvas.height/4+30); 
+                    expContext.fillText("Bot performance is imperfect but still very good, so",expCanvas.width/2,expCanvas.height/4+50);
+                    expContext.fillText("your performance in the collaborative and competitive conditions will not be easy!",expCanvas.width/2,expCanvas.height/4+80);
+                }
+            } else {
+                expContext.fillText("Please read through the instructions at your own pace but when the experiment",expCanvas.width/2,expCanvas.height/4+30); 
+                expContext.fillText("begins you will be required to indicate that you are ready before the next trial begins.",expCanvas.width/2,expCanvas.height/4+50);
+                expContext.fillText("We understand that these tasks can become tedious however, as a courtesy to",expCanvas.width/2,expCanvas.height/4+80);
+                expContext.fillText("time constraints of your fellow player, it is important that", expCanvas.width/2,expCanvas.height/4+100);
+                expContext.fillText("you remain engaged with and progress through the inter-trial and inter-block breaks.",expCanvas.width/2,expCanvas.height/4+120);
+            }
+            // expContext.fillText("Press 'spacebar' to continue", expCanvas.width*.75,expCanvas.height-50);
+            timeout = setTimeout(instructionsContinue,instructionsPause*1000);
+            // expContext.fillText("Press 'b' to return", expCanvas.width*.25,expCanvas.height-50);
+        }
+        function instructions2(){
+            bInInstructions2 = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+            drawInstControls();
+            expContext.fillStyle = fontColour;
+            expContext.textAlign = "center";
+            expContext.font="16px Arial";
+            
+            if (show_drt){expContext.fillText("3/6", expCanvas.width*.75,25);}
+            else {expContext.fillText("3/5", expCanvas.width*.75,25);}
+
+            expContext.fillText("Your paddle is red whereas your fellow player's paddle is blue.",expCanvas.width/2,expCanvas.height/4-50);
+            expContext.fillText("Score points by moving your paddle left or right to hit the balls.",expCanvas.width/2,expCanvas.height/4-30);
+            expContext.fillText("Control the movement of the paddle with your dominant hand using the keyboard.",expCanvas.width/2,expCanvas.height/4-10);
+
+            expContext.fillText("To see your controls, please indicate if you are",expCanvas.width/2,expCanvas.height/4+30);
+            expContext.fillText("right-handed by pressing 'Z' or if you are left-handed press the UP arrow.",expCanvas.width/2,expCanvas.height/4+50);
+
+            expContext.fillText("A short practice trial will follow this screen.",expCanvas.width/2,expCanvas.height/4+90);
+            expContext.fillText("Note: all practice trials are run without player 2.",expCanvas.width/2,expCanvas.height/4+110);
+
+            timeout = setTimeout(instructionsContinue,instructionsPause*1000);
+            // expContext.fillText("Press 'spacebar' to continue", expCanvas.width*.75,expCanvas.height-50);
+            // expContext.fillText("Press 'b' to return", expCanvas.width*.25,expCanvas.height-50);
+        }
+        function instructions3(){
+            bInInstructions3 = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+            drawInstControls();
+            // expContext.fillRect(0, 0, expCanvas.width, expCanvas.height);
+			expContext.fillStyle = fontColour;
+			expContext.font="16px Arial";
+			expContext.textAlign = "center";
+            expContext.fillText("4/6", expCanvas.width*.75,25);
+            expContext.fillText("Along with controlling paddle movement you will also be required",expCanvas.width/2,expCanvas.height/4-60);
+            expContext.fillText("to respond to a flashing green light using your non-dominant hand.",expCanvas.width/2,expCanvas.height/4-40);
+
+            expContext.fillText("The light will display in the side-panels of the screen briefly or",expCanvas.width/2,expCanvas.height/4-10);
+            expContext.fillText("until you respond. However, you can still respond to the light for",expCanvas.width/2,expCanvas.height/4+10);
+            expContext.fillText("a short time after it disappears.",expCanvas.width/2,expCanvas.height/4+30);
+            expContext.fillText('Your "Light Response" key is shown below.',expCanvas.width/2,expCanvas.height/4+70);
+            expContext.fillText("Respond quickly and accurately to the light for score bonuses!",expCanvas.width/2,expCanvas.height/4+100);
+            expContext.fillText("A short practice trial with ONLY the light will follow this screen.",expCanvas.width/2,expCanvas.height/4+120);
+
+            timeout = setTimeout(instructionsContinue,instructionsPause*1000);
+            // expContext.fillText("Press 'spacebar' to continue", expCanvas.width*.75,expCanvas.height-50);
+            // expContext.fillText("Press 'b' to return", expCanvas.width*.25,expCanvas.height-50);
+
+            keyInsts(true,true,plyr1DRTrespKey,plyr2DRTrespKey);
+        }
+
+        function instructions4(){
+            bInInstructions4 = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+			expContext.fillStyle = fontColour;
+			expContext.font="16px Arial";
+			expContext.textAlign = "center";
+            
+            if (show_drt){
+                expContext.fillText("5/6", expCanvas.width*.75,25);
+                expContext.fillText("Now, let's practice a full-length trial with some more balls AND the light!",expCanvas.width/2,expCanvas.height/4-40);
+                expContext.fillText("Remember to respond quickly and accurately to the light for score bonuses!",expCanvas.width/2,expCanvas.height/4-20);
+            }
+            else {
+                expContext.fillText("4/5", expCanvas.width*.75,25);
+                expContext.fillText("Now, let's practice a full-length trial with some more balls!",expCanvas.width/2,expCanvas.height/4-40);
+            }
+            expContext.fillText("Great job!",expCanvas.width/2,expCanvas.height/4-80);
+            
+            // expContext.fillText("Press 'spacebar' to continue", expCanvas.width*.75,expCanvas.height-50);
+            timeout = setTimeout(instructionsContinue,instructionsPause*1000);
+        }
+        function instructionsEnd(){
+            bInInstructionsEnd = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+			expContext.fillStyle = fontColour;
+			expContext.font="16px Arial";
+			expContext.textAlign = "center";
+            if (show_drt){
+                expContext.fillText("6/6", expCanvas.width*.75,25);
+            } else {
+                expContext.fillText("5/5", expCanvas.width*.75,25);
+            }
+            expContext.fillText("Well done!",expCanvas.width/2,expCanvas.height/4-60);
+            expContext.fillText("This ends the practice trials.",expCanvas.width/2,expCanvas.height/4-20);
+            expContext.fillText("You can now join player 2 in the main game for your first set of instructions!",expCanvas.width/2,expCanvas.height/4);
+            
+            // expContext.fillText("Press 'spacebar' to continue", expCanvas.width*.75,expCanvas.height-50);
+            timeout = setTimeout(instructionsContinue,instructionsPause*1000);
+        }
+
+        function drawPracInst(time){
+            expContext.fillStyle = "red";
+            expContext.font = "20px Arial";
+            expContext.fillText("PRACTICE TRIAL",frameLeft+frameWidth/2,frameTop+50);
+            expContext.fillStyle = "black";
+            expContext.font = "16px Arial";
+                 
+            if (time > practiceTrialDuration-dirInst){
+                if (bInPaddlePractice){
+                    if (plyr1DRTrespKey == RHdrtRespKey){
+                        expContext.fillText("Left arrow to move left",frameLeft+frameWidth/2,frameBottom-frameHeight/4);
+                        expContext.fillText("Right arrow to move right",frameLeft+frameWidth/2,frameBottom-frameHeight/4+25);
+                    } else {
+                        expContext.fillText("'Z' to move left",frameLeft+frameWidth/2,frameBottom-frameHeight/4);
+                        expContext.fillText("'C' to move right",frameLeft+frameWidth/2,frameBottom-frameHeight/4+25);
+                    }
+                } else if (bInDRTPractice){
+                    expContext.fillText("Light Response:", expCanvas.width/2, frameBottom-frameHeight/4-25);
+                    if (plyr1DRTrespKey == RHdrtRespKey){
+                        expContext.fillText("Press 'Z'", expCanvas.width/2, frameBottom-frameHeight/4);
+                    } else {
+                        expContext.fillText("Press 'UP' arrow", expCanvas.width/2, frameBottom-frameHeight/4);
+                    }
+                }
+            }
+        }
+
+        function blockInst(blockTypes,count){
+            drawCanvas(frameColour);
+            fwCtx.clearRect(0,0,expCanvas.width, expCanvas.height)
+            dispFireworks = false;
+            bInBlockInstructions    = true;
+            // count++;
+            p1CumulativeScore  = 0; // the cumulative scores for both players throughout each block
+            p2CumulativeScore  = 0;
+            teamCumulativeScore = 0;
+            scoreReset();
+			expContext.fillStyle    = fontColour;
+            expContext.font         ="16px Arial";
+            expContext.textAlign    = "center";
+            if (count !== 0){
+                count++;
+                expContext.fillText("Please take a short 20 second break before beginning block "+count+" of "+nBlocks,expCanvas.width/2, expCanvas.height/4-75);
+                count--;
+            } else {
+                count++;
+                // expContext.fillText("Starting block "+count+" of "+nBlocks,expCanvas.width/2, expCanvas.height/4-75);
+                count--;
+            }
+            expContext.fillText("Please see the instructions below.",expCanvas.width/2, expCanvas.height/4-50);
+            // expContext.fillText(,expCanvas.width/2,expCanvas.height/4-50);
+            // count--;
+
+            if (state.block.block_type == "nonCol"){
+                expContext.fillText("During this block you will only be able to hit the red balls.",expCanvas.width/2,expCanvas.height/4+10);
+                drawBorder(175,120,450,75,2)
+            } else if (state.block.block_type == "col"){
+                expContext.fillText("Welcome to the Team Spirit Demonstration!",expCanvas.width/2 ,expCanvas.height/4+5);
+                expContext.fillText("In this demonstration you will control a Paddle and play alongside another player.",expCanvas.width/2 ,expCanvas.height/4+25);
+                expContext.fillText("Your Paddle is Red. The other player's Paddle is Blue.",expCanvas.width/2,expCanvas.height/4+45);
+                expContext.fillText("The goal is to work as a team to deflect as many descending balls as possible.",expCanvas.width/2 ,expCanvas.height/4+65);
+                expContext.fillText("You may move your red paddle left and right with the corresponding arrow keys.",expCanvas.width/2,expCanvas.height/4+85);
+                expContext.fillText("A green light will flash either side of the game display.",expCanvas.width/2,expCanvas.height/4+105);
+                expContext.fillText("Please use the 'Z' key to respond to this green light as fast as possible!",expCanvas.width/2,expCanvas.height/4+125);
+                expContext.fillText("Feel free to ask Laiton any questions you may have about the experimental platform :)",expCanvas.width/2,expCanvas.height/4+145);
+        
+                drawBorder(50,120,700,200,2)
+           
+            } else if (state.block.block_type == "com"){
+                expContext.fillText("During this block you must try to outscore your opponent.",expCanvas.width/2 ,expCanvas.height/4+5);
+                expContext.fillText("In this block the balls and paddles are red and blue. You can hit any ball with your red paddle.",expCanvas.width/2 ,expCanvas.height/4+25);
+                expContext.fillText("However, hitting a red ball will earn you more points than hitting a blue ball.",expCanvas.width/2,expCanvas.height/4+45);
+                expContext.fillText("Your opponent's paddle is blue. Your opponent will earn more points",expCanvas.width/2,expCanvas.height/4+65);
+                expContext.fillText("hitting a blue ball than a red ball.",expCanvas.width/2,expCanvas.height/4+85);
+                expContext.fillText("Try to hit red balls to maximize your score.",expCanvas.width/2,expCanvas.height/4+105);
+                drawBorder(50,120,700,155,2)
+        }
+        
+            // if (show_drt){
+            //     expContext.fillText("Don't forget to respond quickly and accurately to the flashing light.",expCanvas.width/2,expCanvas.height/4+165);
+            // } 
+
+            keyInsts(true,true,plyr1DRTrespKey,plyr2DRTrespKey,x = expCanvas.height/4+300);
+
+            if (count == 0){
+                timeout = setTimeout(timedContinue,trialBreakTime*1000);
+            } else {
+                timeout = setTimeout(timedContinue,blockBreakTime*1000);
+            }
+        }
+
+        function intertrialWaiting(){
+            drawCanvas(frameColour);
+            expContext.fillStyle = fontColour;
+            expContext.textAlign = 'center';
+            expContext.font = "26px Arial";
+            expContext.fillText("WAITING",expCanvas.width/2, expCanvas.height/3 - 100);
+            expContext.font = "16px Arial";
+            expContext.fillText("Player 1: Ready",expCanvas.width/2, expCanvas.height/3);
+            expContext.fillText("Waiting for Player 2", expCanvas.width/2, expCanvas.height/3 + 25);
+            expContext.fillText("Please wait for player 2.", expCanvas.width/2, expCanvas.height/3 + 100);
+            expContext.fillText("The trial will commence once they have indicated they are ready.", expCanvas.width/2, expCanvas.height/3 + 125);
+
+        }
+
+        // Set Functions
+		function initialise() {
+			// nCurrentBlock       = state.blockNo + 1; // start at zero
+			expCanvas           = document.getElementById("canvas");
+			expContext          = expCanvas.getContext("2d");
+			expContext.fillStyle= frameColour;
+			expContext.fillRect(0, 0, expCanvas.width, expCanvas.height);
+            frameLeft           = drtWidth*0.05;
+			frameRight          = drtWidth*0.95;
+			frameTop            = 0;
+			frameBottom         = frameHeight;
+            //DRT Panels        
+            drtLeft             = 0;
+			drtRight            = frameRight;
+			// Sprite positions
+            p1Start             = frameLeft+(frameWidth*0.33 - pWidth/2);
+            p2Start             = frameRight-(frameWidth*0.33 + pWidth/2);
+            py                  = frameBottom - pHeight*3;
+            bx                  = [frameRight-(frameWidth/2-bRad*4), frameRight-frameWidth/2, frameRight-(frameWidth/2+bRad*4)];
+            by                  = py-bRad;
+            disableScroll();
+            fwCanvas = document.getElementById("fireworks");
+            fwCtx = fwCanvas.getContext("2d");
+            waitingRoomStart = Date.now();
+
+            if (botratheon){
+                ambigubot = state.players[1].hand.split('-')[1] === 'True';
+            }
+            
+            if (state.status === 'ending' || state.players[0].status === 'timedout' || state.players[1].status === 'timedout') { // if someone tries to rejoin later
+                gameclosed();
+            } else if (skipIntro){
+                ws.send(JSON.stringify({'hand':'Right', 'instructionProgress' : 6}))
+                state.players[state.player_id].instructionProgress = 6;
+                state.players[state.player_id].hand = 'Right';
+                blockInst(state.block.block_type, state.blockNo);
+            } else if (state.status === 'playing') {
+                clearTimeout(timeout)
+                nCurrentTrial = state.trialNo+1;
+                moving  = true;
+                start   = state['players'][state.player_id]['trialStart'];
+                startCount++
+                
+                if (state['players'][state.player_id]['hand'] === "Right"){
+                    left = RHleft; 
+                    right = RHright; 
+                    plyr1DRTrespKey = RHdrtRespKey;
+                } else {
+                    left = LHleft; 
+                    right = LHright; 
+                    plyr1DRTrespKey = LHdrtRespKey;
+                }
+                
+                expTrial();
+                proceed = false;
+                bInBlockInstructions = false;
+                bInPractice = false;
+            } else if (state.status === 'reading'){
+                if (state.players[state.player_id].instructionProgress >= 3){
+                    if (state['players'][state.player_id]['hand'] === "Right"){
+                        left = RHleft; 
+                        right = RHright; 
+                        plyr1DRTrespKey = RHdrtRespKey;
+                    } else {
+                        left = LHleft; 
+                        right = LHright; 
+                        plyr1DRTrespKey = LHdrtRespKey;
+                    }
+                }
+                if (state.players[state.player_id].instructionProgress == 0){
+                    userEntry();
+                } else if (state.players[state.player_id].instructionProgress == 1) {
+                    instructionsOnline()
+                } else if (state.players[state.player_id].instructionProgress == 2) {
+                    instructions2()
+                    // selecting controls - check if they have or haven't already.
+                } else if (state.players[state.player_id].instructionProgress == 3) {
+                    instructions3()
+                } else if (state.players[state.player_id].instructionProgress == 4) {
+                    instructions4()
+                } else if (state.players[state.player_id].instructionProgress == 5) {
+                    instructionsEnd()
+                } else if (state.players[state.player_id].instructionProgress >= 6){ //.trialNo+1 > 1){
+                    if (state.trialNo > 0){
+                        clearTimeout(timeout)
+                        bInTrialBreak=true;
+                        bInTrial    = false;
+                        moving      = false;
+                        dispCont    = true;
+                        startCount  = 0;
+                        nCurrentTrial = state.trialNo;
+                        interTrial(score1,score2,teamScore, state.block.block_type);
+                    } else {
+                        blockInst(state.block.block_type, state.blockNo);
+                    }
+                }
+            } else {
+                userEntry()
+            }
+        }
+
+        // confirm user consent to use data
+        var form_data = document.getElementById("data-retention");
+        function handleForm(event) {event.preventDefault(); }
+        form_data.addEventListener('submit', handleForm);
+
+        var data_consent = document.getElementById("submitData")
+        data_consent.onclick = function (){
+            if ((!document.getElementById("removeData").checked && !document.getElementById("retainData").checked)){
+                document.getElementById('empty_response_msg').textContent = "Please make a selection to continue.";
+            } else {
+                data_consent_provided = true;
+                if (document.getElementById("removeData").checked){ws.send(JSON.stringify({'instructionProgress':username1}));}
+                document.getElementById("datacheck").style.display = 'none';
+                document.getElementById("canvas").style.display = 'inline';
+                ws.send(JSON.stringify({"status":"ready"}))
+                intertrialWaiting();
+            }
+        }
+
+        var prolificReturn = document.getElementById('exitButton');
+        prolificReturn.onclick = function() {
+            // Set this to the provided prolific address
+            // window.location.href = 'http://localhost:8080'
+            if(exp_completed){
+                window.location.href = 'https://app.prolific.co/submissions/complete?cc=CTQ5E9YX'
+            } else {
+                window.location.href = 'https://app.prolific.co/submissions/' 
+            }
+
+        }
+        // make the button dance.
+        prolificReturn.addEventListener("mouseover", function(e){prolificReturn.style.backgroundColor = '#247c7f';},false);
+        prolificReturn.addEventListener("mouseout", function(e){prolificReturn.style.backgroundColor = '#5fb49c';},false);
+
+        function removeAllVals(arr, value) {
+            var i = 0;
+            let eventN = 0; // number of items removed from list
+            let ePos = getAllIndexes(arr,value);
+            while (i < arr.length) {
+                if(arr[i] === value) {
+                    arr.splice(i, 1);
+                    eventN += 1;
+                } else {
+                    ++i;
+                }
+            }
+            return [arr,eventN, ePos];
+        }
+        function getAllIndexes(arr, val) {
+            var indexes = [], i;
+            for(i = 0; i < arr.length; i++)
+                if (arr[i] === val)
+                    indexes.push(i);
+            return indexes;
+        }
+        function mean(numbers,missID) {
+            // remove misses from array, return mean without misses, and number of misses
+            let array = removeAllVals(numbers,missID);
+
+            var total = 0, i;
+            for (i = 0; i < array[0].length; i += 1) {
+                total += array[0][i];
+            }
+            return [total / array[0].length, array[1], array[2]];
+        }
+
+        function disableScroll() {
+            // Get the current page scroll position
+            scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            scrollLeft = window.pageXOffset || document.documentElement.scrollLeft,
+            // if any scroll is attempted, set this to the previous value
+            window.onscroll = function() {
+            window.scrollTo(scrollLeft, scrollTop);
+            };
+        }
+        function timedContinue() {
+            if (dispCont){
+                expContext.fillText("Press 'spacebar' to continue.", expCanvas.width/2,expCanvas.height-200);
+                proceed = true;
+            }
+        }
+        function instructionsContinue(){
+            if (dispCont){
+                expContext.fillText("Press 'spacebar' to continue.",expCanvas.width/2,expCanvas.height-150);
+                proceed = true;
+            }
+        }
+
+        function drawCanvas(colour){
+            expContext.fillStyle = colour;
+			expContext.fillRect(0, 0, expCanvas.width, expCanvas.height);
+        }
+        function clearCanvas(){
+            expContext.clearRect(0, 0, expCanvas.width, expCanvas.height);
+        }
+        function drawFrame(){
+            expContext.beginPath();
+            expContext.rect(frameLeft,frameTop,frameWidth,frameHeight);
+            expContext.fillStyle = frameColour;
+            expContext.fill();
+            expContext.stroke();
+        }
+        function clearFrame(){
+            expContext.clearRect(frameLeft,frameTop,frameWidth,frameHeight);
+        }
+        function drawDRT(stimTimes,duration,start,trialBegin = false){
+            let tRem;
+            let drtTimer = Date.now();
+            if (trialBegin){
+                tRem = (-(drtTimer-start)/1000)+duration;
+            } else {
+                tRem = duration;
+            }
+
+
+            if (drtResp1 && show_drt){
+                if (stimTimes[0]-tRem > rtMin && counter1){
+                    if (bInPractice){
+                        hits1++;
+                    } else {
+                        ws.send(JSON.stringify({'rt' : stimTimes[0] - tRem}));
+                        ws.send(JSON.stringify({'increaseScore' : 1}));
+                    }
+                    counter1 = false;
+                } else {
+                    if (!bInPractice){
+                        ws.send(JSON.stringify({'fa': tRem}))
+                    }
+                }
+                drtResp1 = false;
+            }
+            
+            if (tRem > stimTimes[0]){
+                drtResp1 = false; 
+                drtPanels.draw(drtOff);
+            }
+            if (tRem < stimTimes[0] && tRem > stimTimes[0]-drtDur && drtResp1==false && counter1){
+                drtPanels.draw(drtOn);
+            }
+            if (tRem < stimTimes[0]-respWin){
+                onsets.push(stimTimes[0]);
+                stimTimes.shift();
+                if (counter1){ // if still true at this point then no response was made to this stimulus
+                    ws.send(JSON.stringify({'rt': -1}))
+                } 
+                else {
+                    counter1 = true;
+                }
+            }
+
+            expContext.fill();
+            expContext.stroke();
+        }
+
+        function scoring(){
+            if (bInPractice){
+                score1 = hits1;
+            } else {
+                playerId = state.player_id;
+                otherId = playerId === '0' ? '1' : '0';
+                score1 = state.players[playerId]['score'];
+                score2 = state.players[otherId]['score'];
+                // miss1 = state.players[playerId]['miss']
+                // miss2 = state.players[otherId]['miss']
+            }
+            // if (hits1 == 0){score1=0} else {score1=(Math.round((hits1/(hits1+miss1))*1000)).toFixed(0)}
+            // if (hits2 == 0){score2=0} else {score2=(Math.round((hits2/(hits2+miss2))*1000)).toFixed(0)}
+            if(state.block.block_type=="col" || state.block.block_type=="com"){
+                if (score1 == 0 && score2 == 0){
+                    teamScore = 0;
+                }   else {
+                    // teamScore = (Math.round(((hits1+hits2)/(hits1+hits2+miss1))*1000)).toFixed(0);
+                    teamScore = score1+score2;
+                }
+            }
+        }
+        function scoreReset(){
+            hits1       = 0;
+            miss1       = 0;
+            score1      = 0;
+            hits2       = 0;
+            miss2       = 0;
+            score2      = 0;
+            teamScore   = 0;
+            p1teamScore = 0;
+            p2teamScore = 0;
+            drtScore = 0;
+        }
+        function drawScore(blockType,currentBlock){
+            if (bInPractice){
+                playerId = state.player_id;
+                if (playerId==='0'){
+                    expContext.textAlign = "left";
+                    expContext.font = "16px Arial";
+                    expContext.fillStyle = fontColour;
+                    expContext.fillText("Your Score: "+score1,frameLeft+10,frameTop+20);
+                } else {
+                    expContext.textAlign = "right";
+                    expContext.font = "16px Arial";
+                    expContext.fillStyle = fontColour;
+                    expContext.fillText("Your Score: "+score1,frameRight-10,frameTop+20);
+                }
+            } else {
+                if (blockType=="col"){
+                    expContext.textAlign = "left";
+                    expContext.font = "16px Arial";
+                    expContext.fillStyle = fontColour;
+                    expContext.fillText("Team Score: "+teamScore,frameLeft+10,frameTop+20);
+
+                    expContext.textAlign = "right";
+                    expContext.fillText("Team Score: "+teamScore,frameRight-10,frameTop+20);
+                } else if (blockType == "com") {
+                    // Player 1 Score
+                    expContext.textAlign = "left";
+                    expContext.font = "16px Arial";
+                    expContext.fillStyle = fontColour;
+                    expContext.fillText("Your Score: "+score1,frameLeft+10,frameTop+20);
+
+                    // Player 2 Score
+                    expContext.textAlign = "right";
+                    expContext.fillStyle = fontColour;
+                    expContext.fillText("Player 2 Score: "+score2,frameRight-10,frameTop+20);
+                } else {
+                    // Player 1 Score
+                    expContext.textAlign = "left";
+                    expContext.font = "16px Arial";
+                    expContext.fillStyle = fontColour;
+                    expContext.fillText("Your Score: "+score1,frameLeft+10,frameTop+20);
+                }
+            }
+        }
+
+        function drawTimer(duration, start, trialBegin = false){
+            let timeRemaining;
+            let startTime = Date.now();
+            if (trialBegin){
+                timeRemaining = (-(startTime-start)/1000)+duration;
+            } else {
+                timeRemaining = duration;
+            }
+            if (timeRemaining <= 0){timeRemaining = 0;}
+            let dispTime = timeRemaining.toFixed(2);
+            expContext.font = "16px Arial";
+            expContext.fillStyle = fontColour;
+            expContext.textAlign = "center";
+            expContext.fillText(dispTime+'s',frameLeft+frameWidth/2,frameTop+20);
+
+            if (bInPractice){
+                drawPracInst(timeRemaining);
+            }
+            return timeRemaining;
+        }
+        function uniqueAngles(nBalls,min,max) {
+            let counter = 0;
+            let angles = new Array();
+            while (counter < nBalls*2){
+                let newAngle = Math.floor(Math.random()*(max-min)+min);
+                if (angles.includes(newAngle)) {
+                    continue;
+                } else{
+                    angles.push(newAngle);
+                    counter++;
+                }
+            }
+            return angles;
+        }
+        function deg2rad(degrees) {
+            var pi = Math.PI;
+            return degrees*(pi/180);
+        }
+        function randRange(min,max){
+            return Math.random()*(max-min)+min;
+        }
+        function trialShuffle(trialTypes){
+            for (let i = trialTypes.length - 1; i > 0; i--) {
+                let j = Math.floor(Math.random() * (i + 1)); // random index from 0 to i
+                [trialTypes[i], trialTypes[j]] = [trialTypes[j], trialTypes[i]];
+            }
+            return trialTypes;
+        }
+        function drtStimTimes(min,max){
+            let drtTimes    = [max-randRange(drtMin,drtMax)];
+            while (drtTimes.slice(-1)>min){
+                drtTimes.push(drtTimes.slice(-1)-randRange(drtMin,drtMax));
+            }
+            drtTimes.pop()
+            return drtTimes;
+        }
+
+        function drawPracticeTrial(drawStartTime){
+            bInTrial = true;
+            bInTrialBreak = false
+            dispCont = false;
+            if (!drawStartTime){
+                drawStartTime = drawStartTime;
+            }
+            if(!startingTime){startingTime=drawStartTime;}
+            if(!lastTime){lastTime=drawStartTime;}
+            // totalElapsedTimed=(drawStartTime-startingTime);
+            elapsedSinceLastLoop=(drawStartTime-lastTime);
+            lastTime=drawStartTime;
+
+            let frProp = pSpeed * elapsedSinceLastLoop / 60;
+            let speedCorrected = pSpeed * frProp;
+            let ballSpeedCorrected = bSpeed * frProp;
+            if (!ballSpeedCorrected){
+                ballSpeedCorrected = bSpeed;
+            }
+            
+            drawCanvas(fontColour);
+            if (drtActive){
+                drawDRT(drtOnsets,practiceTrialDuration,start,moving);
+            }
+            drawFrame();
+            allBalls.forEach(function(ball){ // ball is the name of each element in the object, same as [for balls in balllist: ball.draw()]
+                ball.draw();
+                ball.speed = ballSpeedCorrected;
+                ball.movePractice(paddle1.x);
+            })
+            paddle1.draw(); paddle1.move(p1Left,p1Right, speedCorrected);
+
+            scoring();
+            drawScore(state.block.block_type,state.blockNo +1);
+            trialTime = drawTimer(practiceTrialDuration, start, moving);
+
+            rAF = requestAnimationFrame(drawPracticeTrial)
+            if (trialTime <= 0){
+                endTrial()
+            };
+        }
+
+        function drawTrial(drawStartTime){
+            bInTrial = true;
+            bInTrialBreak = false
+            dispCont = false;
+            if (!drawStartTime){
+                drawStartTime = drawStartTime;
+            }
+            if(!startingTime){
+                startingTime=drawStartTime;
+            }
+            if(!lastTime){
+                lastTime=drawStartTime;
+                elapsedSinceLastLoop = 0;
+            } else {
+                elapsedSinceLastLoop = drawStartTime - lastTime;
+            }
+            
+            lastTime = drawStartTime;
+            
+            if (isNaN(elapsedSinceLastLoop)){
+                elapsedSinceLastLoop = 0;
+            }
+
+            let frProp = pSpeed * elapsedSinceLastLoop / 60;
+            let bProp   = bSpeed * (messageDelay) / 60;
+            let speedCorrected = pSpeed * frProp;
+            let now = adjustedTime()
+            let elapsed = now - (state.timestamp*1000);
+            let ballSpeedCorrected = bSpeed * (bSpeed * elapsed / 60);
+            
+            drawCanvas(fontColour);
+            if (show_drt){
+                drawDRT(drtOnsets,trialDuration,start,moving);
+            }
+            drawFrame();
+
+            paddle1.move(p1Left,p1Right,speedCorrected);
+            paddle2.move(p2Left,p2Right,speedCorrected);
+            paddle1History.add(now, paddle1.x);
+
+            let playerId = state.player_id;
+            let otherId = playerId === '0' ? '1' : '0';
+            let theirPos = state.players[otherId].pos;
+            paddle2.x = theirPos;
+
+            allBalls.forEach(function(ball){
+                ball.move(this.paddle1.x, this.paddle2.x, elapsed);
+                ball.draw();
+            })
+
+            paddle2.draw();
+            paddle1.draw();
+            
+
+            scoring();
+            drawScore(state.block.block_type,state.blockNo +1);
+            trialTime = drawTimer(trialDuration, start, moving);
+
+            // expContext.font = '12px serif';
+            // expContext.fillStyle = 'FireBrick';
+            // expContext.fillText(`${ messageDelay }, ${ roundTripTime }`, 20, 580);
+
+            rAF = requestAnimationFrame(drawTrial)
+        }
+        function expTrial(){
+            drtOnsets = state.drt.onset
+            drtPanels   = new DRT();
+            p1Balls     =[];
+            p2Balls     =[];
+            allBalls    =[];
+            justOncePlease = true; // For the calculation of cumulative scores
+            currentBlock = state.block.block_type;
+            
+            playerId = state.player_id;
+            otherId = playerId === '0' ? '1' : '0';
+// LH: Below appears to be the code for how balls are treated during the nonCol or Sep conditions.
+            if  (state.block.block_type=="nonCol"){
+                for (let i = 0; i < state.block.n_balls; i++){
+                    p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                }
+                for (let i = state.block.n_balls; i < state.block.n_balls*2; i++){
+                    p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                    allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                }
+            } else {
+                // for (let i = 0; i < state.block.n_balls; i++){
+                //     p1Balls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                //     allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(playerId)], state.balls[i].id, state.balls[i].angle));
+                // }
+                // for (let i = state.block.n_balls; i < state.block.n_balls*2; i++){
+                //     p2Balls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                //     allBalls.push(new Ball(state.balls[i].x, pColours[parseInt(otherId)], state.balls[i].id, state.balls[i].angle));
+                // }                
+                for (let i = 0; i < state.block.n_balls*2; i++){
+                    allBalls.push(new Ball(state.balls[i].x, sharedColour, state.balls[i].id, state.balls[i].angle));
+                }
+            }
+
+            paddle1     = new Paddle(state.players[playerId].pos, p1Colour);
+            paddle2     = new Paddle(state.players[otherId].pos, p2Colour);
+
+            let drawStartTime = null;
+            let rAf;
+            
+            drawTrial();
+
+        }
+
+        async function writeMessages() {
+
+            let sleep = function(time) {
+                return new Promise((resolve) => setTimeout(resolve, time));
+            }
+
+            while (true) {
+                if (state.status === 'playing' && paddle1) {
+                    ws.send(JSON.stringify({ 'pos': paddle1.x, serverTimeDelta, messageDelay, roundTripTime }));
+                    await sleep(50);
+                }
+                else {
+                    await sleep(500);
+                }
+
+                let now = Date.now();
+                if (now - pingSent > 5000) {
+                    ws.send('ping');
+                    pingSent = now;
+                }
+            }
+        }
+
+        async function readMessages() {
+            try {
+                for await (const message of messages) {
+
+                    if (message === 'pong') {
+                        roundTripTime = Date.now() - pingSent;
+                        continue;
+                    }
+
+                    let received = JSON.parse(message);
+
+                    let serverTime = parseInt(1000 * received.timestamp);
+                    let clientTime = Date.now();
+                    let delta = serverTime - clientTime;
+           
+                    if (serverTimeDelta === undefined) {
+                        serverTimeDelta = delta;
+                        messageDelay = 0;
+                    }
+                    else if (delta > serverTimeDelta) {
+                        serverTimeDelta = delta;
+                        messageDelay = 0;
+                    }
+                    else {
+                        messageDelay = clientTime + serverTimeDelta - serverTime;
+                    }
+                    if (state.status === 'waiting' && received.status === 'reading'){
+                        instructions1();
+                        drawWaitingRoomScientist = false;
+                    }
+
+                    if (state.status === 'reading' && received.status === 'playing') {
+                        // transitioning from reading to playing (i.e. beginning trial)
+                        Object.assign(state, received);
+                        clearTimeout(timeout)
+                        nCurrentTrial = state.trialNo+1;
+
+                        if (startCount == 0){
+                            moving  = true;
+                            start   = Date.now();
+                            ws.send(JSON.stringify({ 'trialStart': start}));
+                            startCount++
+                        }
+                        scoreReset();
+                        
+                        expTrial();
+                        proceed = false;
+                        bInBlockInstructions = false;
+                        bInPractice = false;
+                        bInTrial = true;
+                        onereminder = true;
+                    }
+
+                    if (state.status === 'playing' && (received.status === 'reading' || received.status==='ending') && bInTrial) {
+                        // transitioning from playing to reading (i.e. end of trial)
+                        Object.assign(state, received);
+                        startCount = 0;
+                        moving = false;
+                        endTrial()
+                    }
+                    
+                    let playerId = state.player_id;
+                    let otherId = playerId === '0' ? '1' : '0';
+                    if (received.status === 'playing') {
+                        paddle2History.add(parseInt(received.timestamp*1000), received.players[otherId].pos)
+                    }
+                    
+                    if (state.players && state.players[playerId]['instructionProgress'] >= 6 && state.players[playerId]['status'] === 'notReady' && state.players[otherId]['status'] === 'ready' && !botratheon && onereminder){
+                        expContext.fillText("Player 2 is ready.", expCanvas.width/2, expCanvas.height/4+225);
+                        onereminder = false;
+                    }
+                    if (state.players && state.players[otherId]['status'] === 'timedout' && state.players[playerId]['status'] != 'timedout'){
+                        drawWaitingRoomScientist = false
+                        participantTO();
+                    }
+                    Object.assign(state, received);
+                    notifyStateReady();
+                }
+            } catch (e) {
+                poorConnection()
+            }
+        }
+
+        function poorConnection(){
+            if (rAF){
+                cancelAnimationFrame(rAF);
+                if(nCurrentTrial>=state.maxTrials){
+                    if (state.blockNo+1 == nBlocks){
+                        expEnd();
+                    }
+                } else {
+                    clearFrame();
+                    bInTrialBreak=true;
+                    bInTrial    = false;
+                    moving      = false;
+                    drawCanvas(frameColour)
+                    expContext.fillStyle = fontColour;
+                    expContext.textAlign = "center";
+                    expContext.font="16px Arial";
+                    expContext.fillText("Oops!",expCanvas.width/2,expCanvas.height/4-100);
+                    expContext.fillText("It looks like your connection has dropped out.",expCanvas.width/2,expCanvas.height/4-50);
+                    expContext.fillText("Please try refreshing the page when you are ready.",expCanvas.width/2,expCanvas.height/4-25);        
+                }
+            }
+            
+        }
+
+        function participantTO(){
+            // dispFireworks = true;
+            drawCanvas(frameColour);
+            entryPageStyling();
+            expContext.fillStyle = fontColour;
+            expContext.font="30px Arial";
+            expContext.textAlign = "center";
+            expContext.fillText("Player 2 disconnected",expCanvas.width/2,expCanvas.height/4-100);
+            expContext.font="16px Arial";
+            expContext.fillText("Thank you for your participation. The experiment has ended.",expCanvas.width/2,expCanvas.height/4-60);
+            if (sona_participants){
+                expContext.fillText("Participation credit for SONA ID " + state.players[state.player_id].platformID + " been granted.", expCanvas.width/2, expCanvas.height/4-40);
+                expContext.fillText("Please close the browser window to exit the study.",expCanvas.width/2,expCanvas.height/4+60);
+                pointsLink()     
+            } else {
+                expContext.fillText("Please click the 'Return to Prolific' button at the top of the page", expCanvas.width/2, expCanvas.height/4-40);
+                expContext.fillText("and proceed to Return your submission.", expCanvas.width/2, expCanvas.height/4-20);
+                expContext.fillText("Once you return your submission we will process a partial payment proportionate to your progression.", expCanvas.width/2, expCanvas.height/4+80);
+                var eForm = document.getElementById('exitForm');
+                eForm.style.display = 'inline'
+                document.getElementById('exitButton').style.backgroundColor = '#5fb49c';
+                document.getElementById('exitButton').style.color = 'ivory';
+            }
+            expContext.fillText("If you have any questions or concerns about the experiment please contact the researcher", expCanvas.width/2,expCanvas.height/4);
+            expContext.fillText("Laiton Hedley at laiton.hedley@uon.edu.au", expCanvas.width/2,expCanvas.height/4+20);
+        }
+
+        function practiceTrial(){
+            bInPractice = true;
+            drtOnsets   = drtStimTimes(respWin,practiceTrialDuration);
+            drtPanels   = new DRT();
+            let nPracBalls  = bInCombinedPractice? 3 : 1
+            bAngles     = uniqueAngles(nPracBalls,60, 120);
+            allBalls = [];
+            if (!bInDRTPractice){
+                for (let i = 0; i < nPracBalls; i++){
+                    allBalls.push(new Ball(bx[i%3], sharedColour, i, bAngles[i]));
+                }
+            }
+            playerId = state.player_id;
+            otherId = playerId === '0' ? '1' : '0';
+            paddle1     = new Paddle(state.players[playerId].pos, p1Colour);
+            
+            let drawStartTime = null;
+            let rAf;
+            drawPracticeTrial()
+        }
+        function endTrial(){
+            cancelAnimationFrame(rAF);
+            clearFrame();
+            bInTrialBreak=true;
+            bInTrial    = false;
+            moving      = false;
+            dispCont    = true;
+            startCount  = 0;
+            p1Right = false;
+            p1Left  = false;
+            drtResp1 = false;
+            if (bInPractice){
+                // this is where you need to make all your practice changes
+                if (bInPaddlePractice){
+                    hits1 = 0;
+                    if(show_drt){
+                        instructions3()
+                    } else {
+                        instructions4()
+                    }
+                    bInPaddlePractice = false;
+                } else if (bInDRTPractice){
+                    bInDRTPractice = false;
+                    hits1 = 0;
+                    instructions4()
+                } else if (bInCombinedPractice) {
+                    bInCombinedPractice = false;
+                    hits1 = 0;
+                    instructionsEnd()
+                } 
+            } else if (bInTrialBreak){
+                interTrial(score1,score2,teamScore, currentBlock)
+            }
+        }
+
+        var p1DRTtrialData;
+        var p2DRTtrialData;
+        var p1MissEvents;
+        var p2MissEvents;
+
+        function interTrial(p1s, p2s, teams, blockType){
+            drawCanvas(frameColour);
+            drawTrialEnd()
+			expContext.fillStyle = fontColour;
+            expContext.font="16px Arial";
+            expContext.textAlign = "center";
+            expContext.fillText("Trial "+nCurrentTrial+" of "+state.maxTrials +" completed.",expCanvas.width/2,expCanvas.height/5);
+            competitiveQuotes=['Compete to win! Remember the red balls provide more points than the blue!']
+            // ['Compete to win!', 'You can beat them!', 'Outscore them by the end of the block!', 'You can do it! Remember the red balls provide more points than the blue!'];
+            collaborativeQuotes= ['Combine your efforts to win!']
+            // ['Combine your efforts to win!','Work together!', 'Collaborate to boost the team score!', "You can do it! Remember the red balls provide more points than the blue!"];
+            if (blockType == "com"){
+                if (nCurrentTrial == state.maxTrials){
+                    expContext.fillText("Well Done!",expCanvas.width/2, expCanvas.height/5+50);
+                } else {
+                    expContext.fillText(competitiveQuotes[state.trialNo%competitiveQuotes.length],expCanvas.width/2, expCanvas.height/5+50);
+                }
+                drawBorder(100,140, 600, 50, 2);
+            }
+            if (blockType == "col"){
+                if (nCurrentTrial == state.maxTrials){
+                    expContext.fillText("Great Job!",expCanvas.width/2, expCanvas.height/5+50);
+                } else {
+                    expContext.fillText(collaborativeQuotes[state.trialNo%collaborativeQuotes.length],expCanvas.width/2, expCanvas.height/5+50);
+                }
+                drawBorder(75,140, 650, 50, 2);
+            }
+            
+            dispFireworks = nCurrentTrial == state.maxTrials & state.trialNo == 0;
+            if (dispFireworks){drawFireWorks()} else {fwCtx.clearRect(0,0,expCanvas.width, expCanvas.height)};
+            // This notation is whack. Essentially - prepend a string with + to evaluate as a number
+            p1teamScore = p1s; //Math.round((+p1s/(+p1s + +p2s))*+teams);
+            p2teamScore = p2s; //parseInt(teams-p1teamScore); // you can't use addition with parseInt
+            if (justOncePlease){
+                p1CumulativeScore += parseInt(p1s);
+                p2CumulativeScore += parseInt(p2s);
+                teamCumulativeScore+=parseInt(teams);
+                justOncePlease = false;
+            }
+            if (blockType == "com"){
+                expContext.fillText("You:",p1Start+pWidth/2,frameTop+frameHeight/4+100);
+                expContext.fillText("Player 2:",p2Start+pWidth/2,frameTop+frameHeight/4+100);
+                expContext.fillText("Trial Score",frameRight-frameWidth/2,frameTop+frameHeight/4+125);
+                expContext.fillText("Total Score",frameRight-frameWidth/2,frameTop+frameHeight/4+175);
+                expContext.fillText(p1s,p1Start+pWidth/2,frameTop+frameHeight/4+125);
+                expContext.fillText(p2s,p2Start+pWidth/2,frameTop+frameHeight/4+125);
+                expContext.fillText(p1CumulativeScore,p1Start+pWidth/2,frameTop+frameHeight/4+175);
+                expContext.fillText(p2CumulativeScore,p2Start+pWidth/2,frameTop+frameHeight/4+175);
+
+            } else if (blockType == "col") { // collaborative
+                expContext.fillText("You:",p1Start+pWidth/2,frameTop+frameHeight/4+150);
+                expContext.fillText("Player 2:",p2Start+pWidth/2,frameTop+frameHeight/4+150);
+                expContext.fillText("Team: ",expCanvas.width/2,frameTop+frameHeight/4+75);
+                expContext.fillText("Trial Score",p1Start+pWidth/2,frameTop+frameHeight/4+100);
+                expContext.fillText("Total Score",p1Start+pWidth/2,frameTop+frameHeight/4+125);
+                expContext.fillText(p1teamScore,p1Start+pWidth/2,frameTop+frameHeight/4+175);
+                expContext.fillText(p2teamScore,p2Start+pWidth/2,frameTop+frameHeight/4+175);
+                expContext.fillText(teams,expCanvas.width/2,frameTop+frameHeight/4+100);
+                expContext.fillText(teamCumulativeScore,expCanvas.width/2,frameTop+frameHeight/4+125);
+            } else {
+                // expContext.fillText("You:",p1Start+pWidth/2,frameTop+frameHeight/4+100);
+                expContext.fillText("Trial Score",frameWidth/2-30,frameTop+frameHeight/4+60);
+                expContext.fillText("Total Score",frameWidth/2-30,frameTop+frameHeight/4+90);
+                expContext.fillText(p1s,frameRight-frameWidth/2,frameTop+frameHeight/4+60);
+                expContext.fillText(p1CumulativeScore,frameRight-frameWidth/2,frameTop+frameHeight/4+90);
+            }
+
+            keyInsts(true,true,plyr1DRTrespKey,plyr2DRTrespKey, x = expCanvas.height/4+300);
+
+            timeout = setTimeout(timedContinue,trialBreakTime*1000);
+        }
+
+        function dataCheck(){
+            var bInDataCheck = true;
+            document.getElementById("datacheck").style.display = 'inline';
+            document.getElementById("canvas").style.display = 'none';
+            if (ambigubot){
+                document.getElementById("p2_type").style.display = 'inline';
+                document.getElementById("username_msg").style.display = 'none';
+            }
+        }
+
+        function expEnd(){
+            dispFireworks = true;
+            exp_completed = true;
+            drawFireWorks();
+            drawCanvas(frameColour);
+            entryPageStyling();
+            expContext.fillStyle = fontColour;
+            expContext.font="30px Arial";
+            expContext.textAlign = "center";
+            expContext.fillText("The demo is complete!",expCanvas.width/2,expCanvas.height/4-100);
+            expContext.font="16px Arial";
+            expContext.fillText("Thank you for your participation.",expCanvas.width/2,expCanvas.height/4-60);
+            if (sona_participants){
+                expContext.fillText("Participation credit for ID " + state.players[state.player_id].platformID + " been granted.", expCanvas.width/2, expCanvas.height/4-40);
+                expContext.fillText("If this ID is incorrect or you have any questions or concerns about the experiment", expCanvas.width/2, expCanvas.height/4-20);
+                expContext.fillText("You may close the browser window at any time.",expCanvas.width/2,expCanvas.height/4+75);           
+                pointsLink()
+            } else {
+                expContext.fillText("Thanks for taking time to complete the demo! You are welcome close the browser window.", expCanvas.width/2, expCanvas.height/4-40);
+                expContext.fillText("If you have any questions or concerns about the experiment", expCanvas.width/2, expCanvas.height/4-20);
+                // var eForm = document.getElementById('exitForm');
+                // eForm.style.display = 'inline';
+                // document.getElementById('exitButton').style.backgroundColor = '#5fb49c';
+                // document.getElementById('exitButton').style.color = 'ivory';
+            }
+            expContext.fillText("please contact the researchers Laiton Hedley or Ami Eidels at:", expCanvas.width/2,expCanvas.height/4);
+            expContext.fillText("laiton.hedley@uon.edu.au or ami.eidels@newcastle.edu.au", expCanvas.width/2,expCanvas.height/4+20);
+        }
+        function gameclosed(){
+            drawCanvas(frameColour);
+            entryPageStyling();
+            drawGameTitle();
+            fwCtx.clearRect(0,0,expCanvas.width, expCanvas.height)
+            expContext.fillStyle = fontColour;
+            expContext.font="30px Arial";
+            expContext.textAlign = "center";
+            expContext.fillText("This game has closed",expCanvas.width/2,expCanvas.height/4);
+            expContext.font="16px Arial";
+            expContext.fillText("If you have any questions or concerns about the experiment", expCanvas.width/2, expCanvas.height/4+20);
+            expContext.fillText("please contact the researchers Laiton Hedley or Ami Eidels at:", expCanvas.width/2,expCanvas.height/4+40);
+            expContext.fillText("laiton.hedley@uon.edu.au or ami.eidels@newcastle.edu.au", expCanvas.width/2,expCanvas.height/4+60);
+
+            expContext.fillText("You may close the browser window at any time.",expCanvas.width/2,expCanvas.height/4+100);
+        }
+
+		function pointsLink() {
+            var url = "https://newcastle.sona-systems.com/webstudy_credit.aspx?experiment_id=1334&credit_token=becc4ef0cdab4fa4b41fbd778bef01d3&survey_code=" + state.players[state.player_id].platformID
+        	var xhttp = new XMLHttpRequest();
+        	xhttp.open("GET", url, true);
+			xhttp.send();
+        }
+        
+    </script>  
+  </BODY>
+</HTML>

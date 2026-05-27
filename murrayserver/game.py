@@ -1,0 +1,596 @@
+import json
+from asyncio import Event
+from asyncio import create_task
+from asyncio import wait
+from asyncio import wait_for
+from asyncio import FIRST_COMPLETED
+from asyncio import sleep
+from asyncio import TimeoutError
+
+from collections import OrderedDict
+from datetime import datetime
+from random import randint
+from random import shuffle
+from time import time
+from time import monotonic
+from os import environ
+from os import path
+import math
+import sys
+import random
+
+import logging
+
+print('Laiton: Checking Changes Have Been Made PT: 8.1')
+
+
+async def run_later(coro, delay):
+    await sleep(delay)
+    return await coro
+
+trial_duration = 60 #45
+timeout_limit = 60  #60
+
+
+class Game:
+    def __init__(self, game_no):
+        self._game_no = game_no
+        self._joined = { '0': False, '1': False }
+        self._conns = { '0': None, '1': None }
+        self._send_update = OrderedDict({ '0': Event(), '1': Event() })
+        self._receive_update = Event()
+        self._ready = Event()
+        self._ended = False
+        self._blocks = [ ]
+
+        drtWidth = 800
+        width  = drtWidth * 0.9
+        height = 600
+        pWidth = width * 0.10
+        pHeight= pWidth* 0.12
+        bRad   = pHeight*0.90
+        starting_x = [drtWidth*0.33 - (pWidth/2), drtWidth*0.67]
+        shuffle(starting_x)
+        
+
+        self._dim = {
+            ## for 800x600
+            'frameWidth': width, # The DRT rect is the full screen and the game frame is drawn over the top of it.
+            'frameHeight': height,
+            'frameLeft': drtWidth*0.05,
+            'frameRight': drtWidth*0.95,
+            'frameTop': 0,
+            'frameBottom': height,
+            'paddleY': height - pHeight*3,
+            'p1Start': starting_x[0], #drtWidth*0.33 - (pWidth/2),
+            'p2Start': starting_x[1], #drtWidth*0.67,
+            'ballX': [drtWidth/2 - bRad*4, drtWidth/2, drtWidth/2 + bRad*4],
+            'ballY': (height - pHeight*3) - bRad,
+            'pWidth': pWidth,
+            'pHeight': pHeight,
+            'ballR': bRad,
+            }
+
+        block_orders = [
+            # ["nonCol","col","com"], #123 A
+            # ["nonCol","com","col"], #132 B
+            ["col","col","col"], #213 C
+            # ["col","com","nonCol"], #231 D
+            # ["com","nonCol","col"], #312 E
+            # ["com","col","nonCol"]  #321 F
+           ]
+
+        block_types = block_orders[self._game_no % len(block_orders)]
+        n_balls = [3, 6, 3, 6, 3, 6, 3, 6, 3, 6, 3, 6]  
+        #n_balls = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]  
+        # n_balls = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]  
+        balls_per_trial = {}
+
+
+        for block_type in block_types:
+            # shuffle(n_balls)
+            for n in n_balls:
+                self._blocks.append({ 'block_type': block_type, 'n_balls': n })
+                print(n)
+        for trial, n in enumerate(n_balls):
+            trial_name = f"{block_type}_trial_{trial+1}"
+            balls_per_trial[trial_name] = n
+            print(f"{trial_name}: {n}")
+
+        self._state = {
+            'player_id': None,
+            'status': 'waiting',
+            'timestamp': time(),
+            'trialTime': [],
+            'block': self._blocks[0],
+            'blockNo': 0,
+            'players': {
+                '0': {
+                    'pos': self._dim['p1Start'],
+                    'status': 'notReady',
+                    'instructionProgress': 0,
+                    'hand': [],
+                    'trialStart': 0,
+                    'hits': 0,
+                    'miss': 0,
+                    'rt': 0,
+                    'fa': 0,
+                    'score': 0,
+                    },
+                '1': {
+                    'pos': self._dim['p2Start'],
+                    'status': 'notReady',
+                    'instructionProgress': 0,
+                    'hand': [],
+                    'trialStart': 0,
+                    'hits': 0,
+                    'miss': 0,
+                    'rt': 0,
+                    'fa': 0,
+                    'score': 0
+                    },
+            },
+            'balls': [ ],
+            'drt': {
+                'onset': [], 
+                'dispTime': [],
+                'window': [],
+                },
+            }
+
+    def add_player(self):
+        player_id = None
+        if not self._joined['0']:
+            self._joined['0'] = True
+            player_id = '0'
+        else:
+            self._joined['1'] = True
+            player_id = '1'
+        if self._joined['0'] and self._joined['1']:
+            self._ready.set()
+        return player_id
+
+    async def join(self, player_id, ws):
+        if player_id == '0':
+            self._player0_disconnect = None
+        if player_id == '1':
+            self._player1_disconnect = None
+
+        print(f'{ self._game_no } player { player_id } connected')
+
+        if not self._joined[player_id]:
+            self._joined[player_id] = True
+            if self._joined['0'] and self._joined['1']:
+                self._ready.set()
+
+        async def send(obj, delay=None):
+            if delay is not None:
+                t = create_task(run_later(send(obj), delay))
+                t.add_done_callback(lambda f: f.result())
+            else:
+                await ws.send_str(obj)
+
+        async def read():
+            try: 
+                async for msg in ws:
+                    if msg.data == 'ping':
+                        await ws.send_str('pong')
+                    else:
+                        # self._log.info(f'{{ "received": { msg.data }, "player": { player_id } }}')
+                        data = json.loads(msg.data)
+
+                        increase_score = data.get('increaseScore')
+                        if increase_score != None:
+                            self._state['players'][player_id]['score'] += increase_score
+                            del data['increaseScore']
+
+                        self._state['players'][player_id].update(data)
+                        self._receive_update.set()
+            finally:
+                if not self._ready.is_set():
+                    self._joined[player_id] = False
+                if self._state['status'] == 'ending':
+                    self._joined[player_id] = False
+                    if self._joined['0'] is False and self._joined['1'] is False:
+                        self._ended = True
+                else:
+                    # player is having connection issues:
+                    print(f'player {player_id} just left')
+                    if player_id == '0':
+                        self._player0_disconnect = monotonic()
+                    if player_id == '1':
+                        self._player1_disconnect = monotonic()
+
+        async def write():
+            send_event = self._send_update[player_id]
+            send_event.set()
+            while self._ended is False:
+                await send_event.wait()
+                send_event.clear()
+                self._state['player_id'] = player_id
+                state = json.dumps(self._state)
+                delay = None
+                # delay = time() % 4
+                # if delay > 2:
+                #     delay = 4 - delay
+                # delay /= 2
+                await send(state, delay)
+
+
+        write_task = create_task(write())
+        read_task = create_task(read())
+
+        done, pending = await wait({ read_task, write_task }, return_when=FIRST_COMPLETED)
+
+        for p in pending:
+            p.cancel()
+
+        for d in done:
+            d.result()
+
+    def ready(self):
+        return self._ready.is_set()
+
+    def send(self):
+        for player_id, event in self._send_update.items():
+            event.set()
+        self._send_update.move_to_end(player_id, last=False)
+
+    async def update(self):
+        log_state = True
+        try:
+            timeout = None
+            if self._state['status'] == 'playing':
+                timeout = 0.02
+            else:
+                timeout = 0.5
+            await wait_for(self._receive_update.wait(), timeout)
+            self._receive_update.clear()
+        except TimeoutError:
+            log_state = False  # prevent logs from filling up with junk
+
+        now = time()
+        last_time = self._state['timestamp']
+        self._state['timestamp'] = now
+        elapsed = now - last_time
+
+        if self._state['status'] == 'playing' and self._last_status == 'playing':
+            for ball in self._state['balls']:
+                num_balls = len(self._state['balls'])
+                # print(f"Number of balls: {num_balls}")
+                balls_per_player = num_balls/2
+
+
+                x = ball['x'] + ball['speed'] * math.cos(ball['angle']) * elapsed / 0.02
+                y = ball['y'] + ball['speed'] * math.sin(ball['angle']) * elapsed / 0.02
+                angle = ball['angle']
+                trajectory = ball['dir']
+
+                right = self._dim['frameRight'] - self._dim['ballR']
+                left = self._dim['frameLeft'] + self._dim['ballR']
+                top = self._dim['frameTop'] + self._dim['ballR']
+                bottom = self._dim['frameBottom'] - 0.5 * self._dim['ballR']
+
+                if x > right:
+                    x = right - (x - right)
+                    angle = math.pi - angle
+                if x < left:
+                    x = left + (left - x)
+                    angle = math.pi - angle
+                if y > bottom:
+                    y -= (bottom - top)
+                    trajectory = 0
+
+                
+                    if self._state['block']['block_type'] == 'nonCol':
+                        if ball['id'] < 9:
+                            self._state['players']['0']['miss'] += 1
+                        else:
+                            self._state['players']['1']['miss'] += 1
+                    else:
+                        self._state['players']['0']['miss'] += 1
+                        self._state['players']['1']['miss'] += 1
+                if y < top:
+                    y = top + (top - y)
+                    angle = -angle
+                    trajectory = 0
+
+                # If a player is in the right spot at the right ?time?
+                # max_ball_id = 0
+                # for ball in self._balls:
+                #     if ball['id'] > max_ball_id:
+                #         max_ball_id = ball['id']
+
+                if self._state['block']['block_type'] == 'nonCol':
+                    congruhit = 1
+
+                    if ball['id'] < 9:
+                        if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
+                            if x + self._dim['ballR'] > self._state['players']['0']['pos'] and x < self._state['players']['0']['pos'] + self._dim['pWidth'] + self._dim['ballR']: ## approx paddle width - much to account for here.
+                                impact = (x + self._dim['ballR']/2) - (self._state['players']['0']['pos']+ (self._dim['pWidth']/2))
+                                offset = impact/(self._dim['pWidth']/2)/2
+                                if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                                    angle = -angle
+                                else:
+                                    angle = -angle + offset
+                                y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+                                self._state['players']['0']['hits'] += 1
+                                self._state['players']['0']['score'] += 1
+                                trajectory = 1
+
+                    if ball['id'] >= 9:
+                        if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
+                            if x + self._dim['ballR'] > self._state['players']['1']['pos'] and x < self._state['players']['1']['pos'] + self._dim['pWidth'] + self._dim['ballR']: ## approx paddle width - much to account for here.
+                                impact = (x + self._dim['ballR']/2) - (self._state['players']['1']['pos']+ (self._dim['pWidth']/2))
+                                offset = impact/(self._dim['pWidth']/2)/2
+                                if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                                    angle = -angle
+                                else:
+                                    angle = -angle + offset
+                                y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+                                self._state['players']['1']['hits'] += 1
+                                self._state['players']['1']['score'] +=1
+                                trajectory = 1
+           
+                            
+                else:
+                                
+                    if y + self._dim['ballR'] > self._dim['paddleY'] and y < self._dim['paddleY']+self._dim['ballR']:
+                        congruhit = 1
+                        incongruhit = 1
+                        if x + self._dim['ballR'] > self._state['players']['0']['pos'] and x < self._state['players']['0']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
+                            impact = (x + self._dim['ballR']/2) - (self._state['players']['0']['pos']+ (self._dim['pWidth']/2))
+                            offset = impact/(self._dim['pWidth']/2)/2
+                            if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                                angle = -angle
+                            else:
+                                angle = -angle + offset
+                            y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+                            if x + self._dim['ballR'] > self._state['players']['1']['pos'] and x < self._state['players']['1']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
+                                    # print("Both Players Hit same ball")
+
+
+                                    self._state['players']['0']['hits'] += 0.5
+                                    self._state['players']['0']['score'] += 0.5
+                                    self._state['players']['1']['hits'] += 0.5
+
+                            else:
+
+                                if int(ball['id']) < balls_per_player: # balls_per_trial: # ball_ids_for_players:
+                                    # print(f"{trial_name}: {n}")
+                                    # print("Congruent Ball p0")
+                                    self._state['players']['0']['hits'] += 1
+                                    self._state['players']['0']['score'] += 1
+
+                                else: 
+                                    # print("Non Congruent Ball p0")
+                                    # print(f"{trial_name}: {n}")
+                                    self._state['players']['0']['hits'] += 1
+                                    self._state['players']['0']['score'] += 1
+
+
+                            trajectory = 1
+
+                        elif x + self._dim['ballR'] > self._state['players']['1']['pos'] and x < self._state['players']['1']['pos'] + self._dim['pWidth'] + self._dim['ballR']:
+                            impact = (x + self._dim['ballR']/2) - (self._state['players']['1']['pos']+ (self._dim['pWidth']/2))
+                            offset = impact/(self._dim['pWidth']/2)/2
+                            if (-angle + offset) <= -math.radians(155) or (-angle + offset >= -math.radians(35)):
+                                angle = -angle
+                            else:
+                                angle = -angle + offset
+                            y = self._dim['paddleY'] - (self._dim['paddleY'] - y) - self._dim['ballR']
+
+
+                            if int(ball['id']) >=  balls_per_player: #balls_per_trial: #ball_ids_for_players:
+                                    # print("Congruent Ball p1")
+                                    # print(f"{trial_name}: {n}")
+                                    self._state['players']['1']['hits'] += 1
+                                    self._state['players']['1']['score'] += 1 #congruhit
+                            else: 
+                                    # print("Non Congruent Ball p1")
+                                    # print(f"{trial_name}: {n}")
+                                    self._state['players']['1']['hits'] += 1
+                                    self._state['players']['1']['score']+=1
+                            trajectory = 1
+
+                ball['x'] = x
+                ball['y'] = y
+                ball['angle'] = angle
+                ball['dir'] = trajectory
+
+        if log_state:
+            self._log.info(json.dumps(self._state))
+        self._last_status = self._state['status']
+
+    async def run(self):
+
+        self._log = logging.getLogger(f'game-{ self._game_no }')
+        self._log.setLevel(logging.INFO)
+
+        time_string = datetime.now().isoformat(timespec='seconds').replace(':', '')
+
+        log_path = environ.get('SERVER_LOG_PATH', '')
+        log_path = path.join(log_path, f'game-{ time_string }-{ self._game_no }.txt')
+
+        self._logHandler = logging.FileHandler(log_path, mode='w')
+        self._logHandler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(message)s')
+        self._logHandler.setFormatter(formatter)
+        self._log.addHandler(self._logHandler)
+
+        try:
+            await self._ready.wait()
+
+            print(f'{ self._game_no } ready!')
+
+            def resetVars():
+                self._state['players']['0']['hits'] = 0
+                self._state['players']['1']['hits'] = 0
+                self._state['players']['0']['miss'] = 0
+                self._state['players']['1']['miss'] = 0
+                self._state['players']['0']['rt'] = 0
+                self._state['players']['1']['rt'] = 0
+                self._state['players']['0']['fa'] = 0
+                self._state['players']['1']['fa'] = 0
+                self._state['players']['0']['score'] = 0
+                self._state['players']['1']['score'] = 0
+
+            for block_no, block in enumerate(self._blocks):
+                self._state['status'] = 'reading'
+                self._state['players']['0']['status'] = 'notReady'
+                self._state['players']['1']['status'] = 'notReady'
+                self._state['block'] = block
+                self._state['blockNo'] = int(block_no / 12 * 1)  # change 12 to 36 when time - it just needs to be the number of trials per block
+                self._state['trialNo'] = block_no%(len(self._blocks) / 1)
+                self._state['maxTrials'] = len(self._blocks) / 3 # trials per block
+
+                resetVars()
+
+                #LH here see how balls are duplicated we could create two lists for balls one that is a list exclusively related to palyer 0 and then one for player 1 to ensure colors match... 
+                balls = [None] * block['n_balls'] * 2 # n_balls represents the number of balls per player, so should be doubled. 
+
+                print(f'Balls {balls}')
+                angles_list = list(range(-45, -136, -5))
+                random.shuffle(angles_list) 
+                # displayed_angles = angles[:len(balls)] 
+
+                
+                #angles = [0-math.radians(randint(45,135)) for angle in balls]
+
+
+                angles_in_radians = [math.radians(angle) for angle in angles_list]
+                angles_in_radians = [-abs(math.radians(angle)) for angle in angles_list]
+                angles = angles_in_radians 
+
+                
+                for idx, angle in enumerate(angles):
+                    print('Ball ID & Angles:')
+                    print(f"Ball {idx + 1}: {angle:.2f} radians or {math.degrees(angle):.2f} degrees")
+                    print(f"Angles List: {angles_list}")
+                    # print(f'ball nos: {len(balls)}')
+                    # print(f"The angles balls should take {displayed_angles}")
+
+                speed = 4
+                for i, _ in enumerate(balls):
+                    # print("Enumerate has been called")
+                    # print("Ball numbers below:")
+                    # print(balls)
+                    if self._state['block']['block_type'] == "nonCol":
+                        if i >= len(balls)/2:
+                            balls[i] = {
+                                'x': self._dim['ballX'][i%len(self._dim['ballX'])],
+                                'y': self._dim['ballY'],
+                                'angle': angles[i],
+                                'speed': speed,
+                                'id': int(9 - ((len(balls)/2) - i)),
+                                'dir': 1,
+                            }
+                        else:
+                            balls[i] = {
+                            'x': self._dim['ballX'][i%len(self._dim['ballX'])],
+                            'y': self._dim['ballY'],
+                            'angle': angles[i],
+                            'speed': speed,
+                            'id': i,
+                            'dir': 1,
+                            }
+                           
+                    else:
+
+                        balls[i] = {
+                        'x': self._dim['ballX'][i%len(self._dim['ballX'])],
+                        'y': self._dim['ballY'],
+                        'angle': angles[i],
+                        'speed': speed,
+                        'id': i,
+                        'dir': 1,
+                        }
+                    print(f'angle {round(angles[i], 2)}')
+
+                self._state['balls'] = balls
+
+                ## DRT
+                self._state['drt']['onset'] = [trial_duration - (randint(3000,5000)/1000)] ## change trial duration as necessary
+                # determine trial presentation intervals, display times, and response windows.
+                while self._state['drt']['onset'][-1] > 5:
+                    self._state['drt']['onset'].append(self._state['drt']['onset'][-1] - (randint(3000,5000)/1000))
+
+                self._state['drt']['dispTime'] = [stim-1 for stim in self._state['drt']['onset']]
+                self._state['drt']['window'] = [stim-2.5 for stim in self._state['drt']['onset']]
+                if self._state['drt']['window'][-1] <= 0:  ## remove the last stimulus time if it's too close to the end of the trial.
+                    self._state['drt']['onset'], self._state['drt']['dispTime'], self._state['drt']['window'] = self._state['drt']['onset'][0:-1], self._state['drt']['dispTime'][0:-1], self._state['drt']['window'][0:-1]
+
+                self.send()
+
+                self._log.info(json.dumps(self._state))
+
+                print(f'{ self._game_no } block { block_no }, awaiting players')
+                
+
+                while True:
+                    await self.update()
+                    self.send()
+                    # print(f'{ self._game_no } player 0 { self._state["players"]["0"]["status"] }')
+                    # print(f'{ self._game_no } player 1 { self._state["players"]["1"]["status"] }')
+
+                    if (self._state['players']['0']['status'] == 'ready'
+                            and self._state['players']['1']['status'] == 'ready'):
+                        break
+                    # # connection timeout
+                    try:
+                        if monotonic() - self._player0_disconnect > timeout_limit:
+                            self._state['players']['0']['status'] = 'timedout'
+                            self.send()
+                            raise Exception
+                    except:
+                        pass
+                    try:
+                        if monotonic() - self._player1_disconnect > timeout_limit:
+                            self._state['players']['1']['status'] = 'timedout'
+                            self.send()
+                            raise Exception
+                    except:
+                        pass
+
+                self._state['players']['0']['pos'] = self._dim['p1Start']
+                self._state['players']['1']['pos'] = self._dim['p2Start']
+                self._state['status'] = 'playing'
+                self.send()
+
+                self._log.info(json.dumps(self._state))
+
+                print(f'{ self._game_no } block { block_no }, begun!')
+
+                start_time = monotonic()
+
+                async def play():
+                    while monotonic() - start_time < trial_duration+2:
+                        await self.update()
+                        self.send()
+                        self._state['trialTime'] = monotonic() - start_time
+
+                print(f'{ self._game_no } beginning game loop')
+
+                try:
+                    await wait_for(play(), trial_duration) # set to trial duration
+                except TimeoutError:
+                    print(f'{ self._game_no } game timed out')
+                else:
+                    print(f'{ self._game_no } game did not timeout')
+
+                print(f'{ self._game_no } block { block_no }, complete!')
+                self._logHandler.flush()
+
+        except BaseException as e:
+            self._log.exception(e)
+            raise e
+        finally:
+            self._state['status'] = 'ending'
+            while not self._ended:
+                await self.update()
+                self.send()
+            self._log.removeHandler(self._logHandler)
+            self._logHandler.flush()
+            self._logHandler.close()
+            del self._logHandler
+            del self._log
