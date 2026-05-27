@@ -1,7 +1,7 @@
 # Separate Fly app config for future/demo-safe deployments.
 # Use with: flyctl deploy -c fly.next.toml
 
-app = 'murrayserver-next'
+app = 'teamspiritdemo'
 primary_region = 'iad'
 
 [build]
